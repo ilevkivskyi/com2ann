@@ -1,7 +1,7 @@
 """Tests for the com2ann.py script in the Tools/parser directory."""
 
 import unittest
-from com2ann import *
+from com2ann import com2ann, TYPE_COM
 import re
 
 
@@ -11,6 +11,7 @@ class BaseTestCase(unittest.TestCase):
         self.assertEqual(com2ann(code,
                          drop_None=n, drop_Ellipsis=e, silent=True),
                          expected)
+
 
 class SimpleTestCase(BaseTestCase):
     # Tests for basic conversions
@@ -67,6 +68,7 @@ class SimpleTestCase(BaseTestCase):
         for line in ["", "#", "# comment", "#type", "type int:"]:
             self.assertFalse(re.search(TYPE_COM, line))
 
+
 class BigTestCase(BaseTestCase):
     # Tests for really crazy formatting, to be sure
     # that script works reasonably in extreme situations
@@ -75,6 +77,7 @@ class BigTestCase(BaseTestCase):
         self.maxDiff = None
         self.check(crazy_code, big_result, False, False)
         self.check(crazy_code, big_result_ne, True, True)
+
 
 crazy_code = """\
 # -*- coding: utf-8 -*- # this should not be spoiled
