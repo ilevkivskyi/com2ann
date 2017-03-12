@@ -3,6 +3,9 @@
 import unittest
 from com2ann import com2ann, TYPE_COM
 import re
+import sys
+
+PY36 = sys.version_info >= (3, 6)
 
 
 class BaseTestCase(unittest.TestCase):
@@ -18,7 +21,8 @@ class SimpleTestCase(BaseTestCase):
 
     def test_basics(self):
         self.check("z = 5", "z = 5")
-        self.check("z: int = 5", "z: int = 5")
+        if PY36:
+            self.check("z: int = 5", "z: int = 5")
         self.check("z = 5 # type: int", "z: int = 5")
         self.check("z = 5 # type: int # comment",
                    "z: int = 5 # comment")
