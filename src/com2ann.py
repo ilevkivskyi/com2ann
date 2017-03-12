@@ -19,12 +19,12 @@ class _Data:
     def __init__(self, lines, tokens):
         self.lines = lines
         self.tokens = tokens
-        ttab = defaultdict(list) # maps line number to token numbers
+        ttab = defaultdict(list)  # maps line number to token numbers
         for i, tok in enumerate(tokens):
             ttab[tok.start[0]].append(i)
         self.ttab = ttab
-        self.success = [] # list of lines where type comments where processed
-        self.fail = [] # list of lines where type comments where rejected
+        self.success = []  # list of lines where type comments where processed
+        self.fail = []  # list of lines where type comments where rejected
 
 
 def skip_blank(d, lno):
@@ -35,7 +35,7 @@ def skip_blank(d, lno):
 
 def find_start(d, lcom):
     """Find first char of the assignment target."""
-    i = d.ttab[lcom + 1][-2] # index of type comment token in tokens list
+    i = d.ttab[lcom + 1][-2]  # index of type comment token in tokens list
     while ((d.tokens[i].exact_type != tokenize.NEWLINE) and
            (d.tokens[i].exact_type != tokenize.ENCODING)):
         i -= 1
@@ -52,8 +52,10 @@ def check_target(stmt):
         targ = assign.targets[0]
     else:
         return False
-    if (isinstance(targ, ast.Name) or isinstance(targ, ast.Attribute)
-        or isinstance(targ, ast.Subscript)):
+    if (
+        isinstance(targ, ast.Name) or isinstance(targ, ast.Attribute) or
+        isinstance(targ, ast.Subscript)
+    ):
         return True
     return False
 
@@ -68,8 +70,8 @@ def find_eq(d, lstart):
             pars += 1
         elif ch in ')]}':
             pars -= 1
-        if ch == '#' or col == len(d.lines[lno])-1:
-            lno = skip_blank(d, lno+1)
+        if ch == '#' or col == len(d.lines[lno]) - 1:
+            lno = skip_blank(d, lno + 1)
             col = 0
         else:
             col += 1
@@ -80,7 +82,7 @@ def find_val(d, poseq):
     """Find position of first char of assignment value starting from poseq."""
     lno, col = poseq
     while (d.lines[lno][col].isspace() or d.lines[lno][col] in '=\\'):
-        if col == len(d.lines[lno])-1:
+        if col == len(d.lines[lno]) - 1:
             lno += 1
             col = 0
         else:
@@ -94,10 +96,10 @@ def find_targ(d, poseq):
     while (d.lines[lno][col].isspace() or d.lines[lno][col] in '=\\'):
         if col == 0:
             lno -= 1
-            col = len(d.lines[lno])-1
+            col = len(d.lines[lno]) - 1
         else:
             col -= 1
-    return lno, col+1
+    return lno, col + 1
 
 
 def trim(new_lines, string, ltarg, poseq, lcom, ccom):
@@ -109,16 +111,17 @@ def trim(new_lines, string, ltarg, poseq, lcom, ccom):
     poseq -- position of equal sign
     lcom, ccom -- position of type comment
     """
-    nopars = lambda s: s.replace('(', '').replace(')', '')
+    def nopars(s):
+        return s.replace('(', '').replace(')', '')
     leq, ceq = poseq
     end = ccom if leq == lcom else len(new_lines[leq])
     subline = new_lines[leq][:ceq]
     if leq == ltarg:
         subline = subline.rstrip()
     new_lines[leq] = subline + (new_lines[leq][end:] if leq == lcom
-                                else new_lines[leq][ceq+1:end])
+                                else new_lines[leq][ceq + 1:end])
 
-    for lno in range(leq+1,lcom):
+    for lno in range(leq + 1, lcom):
         new_lines[lno] = nopars(new_lines[lno])
 
     if lcom != leq:
@@ -144,16 +147,16 @@ def _com2ann(d, drop_None, drop_Ellipsis):
                 continue
             ccom = match.start()
             if not any(d.tokens[i].exact_type == tokenize.COMMENT
-                   for i in d.ttab[lcom + 1]):
+                       for i in d.ttab[lcom + 1]):
                 d.fail.append(lcom)
-                continue # type comment inside string
+                continue  # type comment inside string
             lstart = find_start(d, lcom)
-            stmt_str = dedent(''.join(d.lines[lstart:lcom+1]))
+            stmt_str = dedent(''.join(d.lines[lstart:lcom + 1]))
             try:
                 stmt = ast.parse(stmt_str)
             except SyntaxError:
                 d.fail.append(lcom)
-                continue # for or with statements
+                continue  # for or with statements
             if not check_target(stmt):
                 d.fail.append(lcom)
                 continue
@@ -178,21 +181,21 @@ def _com2ann(d, drop_None, drop_Ellipsis):
 
             string = False
             if isinstance(val, ast.Tuple):
-            # t = 1, 2 -> t = (1, 2); only latter is allowed with annotation
-                free_place = int(new_lines[lval][cval-2:cval] == '  ')
-                new_lines[lval] = (new_lines[lval][:cval-free_place] +
-                                       op_par + new_lines[lval][cval:])
+                # t = 1, 2 -> t = (1, 2); only latter is allowed with annotation
+                free_place = int(new_lines[lval][cval - 2:cval] == '  ')
+                new_lines[lval] = (new_lines[lval][:cval - free_place] +
+                                   op_par + new_lines[lval][cval:])
             elif isinstance(val, ast.Ellipsis) and drop_Ellipsis:
                 string = '...'
             elif (isinstance(val, ast.NameConstant) and
-                        val.value is None and drop_None):
+                  val.value is None and drop_None):
                 string = 'None'
             if string:
                 trim(new_lines, string, ltarg, poseq, lcom, ccom)
 
             # finally write an annotation
             new_lines[ltarg] = (new_lines[ltarg][:ctarg] +
-                              ': ' + tp + new_lines[ltarg][ctarg:])
+                                ': ' + tp + new_lines[ltarg][ctarg:])
     return ''.join(new_lines)
 
 
@@ -223,7 +226,7 @@ def com2ann(code, *, drop_None=False, drop_Ellipsis=False, silent=False):
     A summary of translated comments id printed by default.
     """
     try:
-        ast.parse(code) # we want to work only with file without syntax errors
+        ast.parse(code)  # we want to work only with file without syntax errors
     except SyntaxError:
         return None
     lines = code.splitlines(keepends=True)
@@ -236,10 +239,10 @@ def com2ann(code, *, drop_None=False, drop_Ellipsis=False, silent=False):
     if not silent:
         if data.success:
             print('Comments translated on lines:',
-                  ', '.join(str(lno+1) for lno in data.success))
+                  ', '.join(str(lno + 1) for lno in data.success))
         if data.fail:
             print('Comments rejected on lines:',
-                  ', '.join(str(lno+1) for lno in data.fail))
+                  ', '.join(str(lno + 1) for lno in data.fail))
         if not data.success and not data.fail:
             print('No type comments found')
 
@@ -258,8 +261,7 @@ def translate_file(infile, outfile, dnone, dell, silent):
     if not silent:
         print('File:', infile)
     new_code = com2ann(code, drop_None=dnone,
-                             drop_Ellipsis=dell,
-                             silent=silent)
+                       drop_Ellipsis=dell, silent=silent)
     if new_code is None:
         print("SyntaxError in", infile)
         return
@@ -283,13 +285,13 @@ if __name__ == '__main__':
                              "translated and rejected comments",
                         action="store_true")
     parser.add_argument("-n", "--drop-none",
-                   help="drop any None as assignment value during\n"
+                        help="drop any None as assignment value during\n"
                         "translation if it is annotated by a type coment",
-                   action="store_true")
+                        action="store_true")
     parser.add_argument("-e", "--drop-ellipsis",
-                   help="drop any Ellipsis (...) as assignment value during\n"
+                        help="drop any Ellipsis (...) as assignment value during\n"
                         "translation if it is annotated by a type coment",
-                   action="store_true")
+                        action="store_true")
     args = parser.parse_args()
     if args.outfile is None:
         args.outfile = args.infile
@@ -298,7 +300,7 @@ if __name__ == '__main__':
         translate_file(args.infile, args.outfile,
                        args.drop_none, args.drop_ellipsis, args.silent)
     else:
-        for root, dirs, files in os.walk(args.infile):
+        for root, _, files in os.walk(args.infile):
             for afile in files:
                 _, ext = os.path.splitext(afile)
                 if ext == '.py' or ext == '.pyi':
