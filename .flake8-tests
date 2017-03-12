@@ -1,0 +1,13 @@
+[flake8]
+# fake builtins for python2/*
+builtins = basestring, unicode
+max-line-length = 90
+ignore =
+  E306,
+  E701,
+  E704,
+  F811,
+  B3,
+  DW12
+exclude =
+  src/com2ann.py
