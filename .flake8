@@ -1,5 +1,4 @@
 [flake8]
-builtins = basestring, unicode
 max-line-length = 90
 ignore =
   B3,

@@ -1,18 +1,9 @@
 """Tests for the com2ann.py script in the Tools/parser directory."""
 
 import unittest
-import test.support
-import os
+from com2ann import *
 import re
 
-from test.test_tools import basepath, toolsdir, skip_if_missing
-
-skip_if_missing()
-
-parser_path = os.path.join(toolsdir, "parser")
-
-with test.support.DirsOnSysPath(parser_path):
-    from com2ann import *
 
 class BaseTestCase(unittest.TestCase):
 
