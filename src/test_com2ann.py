@@ -12,7 +12,7 @@ class BaseTestCase(unittest.TestCase):
 
     def check(self, code, expected, n=False, e=False):
         self.assertEqual(com2ann(code,
-                         drop_None=n, drop_Ellipsis=e, silent=True),
+                         drop_none=n, drop_ellipsis=e, silent=True),
                          expected)
 
 

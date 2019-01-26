@@ -1,12 +1,26 @@
-"""Helper module to tranlate 3.5 type comments to 3.6 variable annotations."""
+"""Helper module to translate type comments to type annotations.
+
+The key idea of this module is to perform the translation while preserving
+the original formatting as much as possible. We try to be not opinionated
+about code formatting and therefore work at the source code and tokenizer level
+instead of modifying AST and using un-parse.
+
+We are especially careful about assignment statements, and keep the placement
+of additional (non-type) comments. For function definitions, we might introduce
+some formatting modifications, if the original formatting was too tricky.
+"""
 import re
 import os
 import ast
+from ast import Module
 import argparse
 import tokenize
+from tokenize import TokenInfo
 from collections import defaultdict
 from textwrap import dedent
 from io import BytesIO
+
+from typing import List, DefaultDict, Tuple, Optional
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -14,28 +28,37 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:.*$', flags=re.DOTALL)
 TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
 
 
-class _Data:
+class Data:
     """Internal class describing global data on file."""
-    def __init__(self, lines, tokens):
+    def __init__(self, lines: List[str], tokens: List[TokenInfo]):
+        # Source code lines.
         self.lines = lines
+        # Tokens for the source code.
         self.tokens = tokens
-        ttab = defaultdict(list)  # maps line number to token numbers
+        # Map line number to token numbers. For example {1: [0, 1, 2, 3], 2: [4, 5]}
+        # means that first to fourth tokens are on the first line.
+        token_tab: DefaultDict[int, List[int]] = defaultdict(list)
         for i, tok in enumerate(tokens):
-            ttab[tok.start[0]].append(i)
-        self.ttab = ttab
-        self.success = []  # list of lines where type comments where processed
-        self.fail = []  # list of lines where type comments where rejected
+            token_tab[tok.start[0]].append(i)
+        self.token_tab = token_tab
+        self.success: List[int] = []  # list of lines where type comments where processed
+        self.fail: List[int] = []  # list of lines where type comments where rejected
 
 
-def skip_blank(d, lno):
-    while d.lines[lno].strip() == '':
-        lno += 1
-    return lno
+def skip_blank(d: Data, line: int) -> int:
+    """Return first non-blank line number after `line`."""
+    while not d.lines[line].strip():
+        line += 1
+    return line
 
 
-def find_start(d, lcom):
-    """Find first char of the assignment target."""
-    i = d.ttab[lcom + 1][-2]  # index of type comment token in tokens list
+def find_start(d: Data, line_com: int) -> int:
+    """Find line where first char of the assignment target appears.
+
+    `line_com` is the line where type comment was found.
+    """
+    i = d.token_tab[line_com + 1][-2]  # index of type comment token in tokens list
+    # First climb back to end of previous statement.
     while ((d.tokens[i].exact_type != tokenize.NEWLINE) and
            (d.tokens[i].exact_type != tokenize.ENCODING)):
         i -= 1
@@ -43,186 +66,212 @@ def find_start(d, lcom):
     return skip_blank(d, lno)
 
 
-def check_target(stmt):
+def check_target(stmt: Module) -> bool:
+    """Check if the statement is suitable for annotation.
+
+    Type comments can placed on with and for statements, but
+    annotation can be placed only on an simple assignment with a single target.
+    """
     if len(stmt.body):
         assign = stmt.body[0]
     else:
         return False
     if isinstance(assign, ast.Assign) and len(assign.targets) == 1:
-        targ = assign.targets[0]
+        target = assign.targets[0]
     else:
         return False
     if (
-        isinstance(targ, ast.Name) or isinstance(targ, ast.Attribute) or
-        isinstance(targ, ast.Subscript)
+        isinstance(target, ast.Name) or isinstance(target, ast.Attribute) or
+        isinstance(target, ast.Subscript)
     ):
         return True
     return False
 
 
-def find_eq(d, lstart):
-    """Find equal sign starting from lstart taking care about d[f(x=1)] = 5."""
+def find_eq(d: Data, line_start: int) -> Tuple[int, int]:
+    """Find equal sign position starting from `line_start`.
+
+    We need to be careful about not taking first assignment in d[f(x=1)] = 5.
+    """
     col = pars = 0
-    lno = lstart
-    while d.lines[lno][col] != '=' or pars != 0:
-        ch = d.lines[lno][col]
+    line = line_start
+    while d.lines[line][col] != '=' or pars != 0:
+        ch = d.lines[line][col]
         if ch in '([{':
             pars += 1
         elif ch in ')]}':
             pars -= 1
-        if ch == '#' or col == len(d.lines[lno]) - 1:
-            lno = skip_blank(d, lno + 1)
+        # A comment or blank line in the middle of assignment statement -- skip it.
+        if ch == '#' or col == len(d.lines[line]) - 1:
+            line = skip_blank(d, line + 1)
             col = 0
         else:
             col += 1
-    return lno, col
+    return line, col
 
 
-def find_val(d, poseq):
-    """Find position of first char of assignment value starting from poseq."""
-    lno, col = poseq
-    while (d.lines[lno][col].isspace() or d.lines[lno][col] in '=\\'):
-        if col == len(d.lines[lno]) - 1:
-            lno += 1
+def find_val(d: Data, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
+    """Find position of first character of the assignment r.h.s.
+
+    `pos_eq` is the position of equality sign in the assignment.
+    """
+    line, col = pos_eq
+    # Walk forward from equality sign.
+    while d.lines[line][col].isspace() or d.lines[line][col] in '=\\':
+        if col == len(d.lines[line]) - 1:
+            line += 1
             col = 0
         else:
             col += 1
-    return lno, col
+    return line, col
 
 
-def find_targ(d, poseq):
-    """Find position of last char of target (annotation goes here)."""
-    lno, col = poseq
-    while (d.lines[lno][col].isspace() or d.lines[lno][col] in '=\\'):
+def find_target(d: Data, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
+    """Find position of last character of the target (annotation goes here)."""
+    line, col = pos_eq
+    # Walk backward from the equality sign.
+    while d.lines[line][col].isspace() or d.lines[line][col] in '=\\':
         if col == 0:
-            lno -= 1
-            col = len(d.lines[lno]) - 1
+            line -= 1
+            col = len(d.lines[line]) - 1
         else:
             col -= 1
-    return lno, col + 1
+    return line, col + 1
 
 
-def trim(new_lines, string, ltarg, poseq, lcom, ccom):
+def trim(new_lines: List[str], string: str,
+         line_target: int, pos_eq: Tuple[int, int],
+         line_com: int, col_com: int) -> None:
     """Remove None or Ellipsis from assignment value.
 
-    Also remove parens if one has (None), (...) etc.
-    string -- 'None' or '...'
-    ltarg -- line where last char of target is located
-    poseq -- position of equal sign
-    lcom, ccom -- position of type comment
+    Also remove parentheses if one has (None), (...) etc.
+    This modifies the `new_lines` in place.
+
+    Arguments:
+    * string: 'None' or '...'
+    * line_target: line where last char of target is located
+    * pos_eq: position of the equality sign
+    * line_com, col_com: position of the type comment
     """
-    def nopars(s):
+    def no_pars(s: str) -> str:
         return s.replace('(', '').replace(')', '')
-    leq, ceq = poseq
-    end = ccom if leq == lcom else len(new_lines[leq])
-    subline = new_lines[leq][:ceq]
-    if leq == ltarg:
-        subline = subline.rstrip()
-    new_lines[leq] = subline + (new_lines[leq][end:] if leq == lcom
-                                else new_lines[leq][ceq + 1:end])
+    line_eq, col_eq = pos_eq
 
-    for lno in range(leq + 1, lcom):
-        new_lines[lno] = nopars(new_lines[lno])
+    sub_line = new_lines[line_eq][:col_eq]
+    if line_eq == line_target:
+        sub_line = sub_line.rstrip()
+        replacement = new_lines[line_eq][col_com:]
+    else:
+        replacement = new_lines[line_eq][col_eq + 1:]
 
-    if lcom != leq:
-        subline = nopars(new_lines[lcom][:ccom]).replace(string, '')
-        if (not subline.isspace()):
-            subline = subline.rstrip()
-        new_lines[lcom] = subline + new_lines[lcom][ccom:]
+    new_lines[line_eq] = sub_line + replacement
+
+    # Strip all parentheses between equality sign an type comment.
+    for line in range(line_eq + 1, line_com):
+        new_lines[line] = no_pars(new_lines[line])
+
+    if line_com != line_eq:
+        sub_line = no_pars(new_lines[line_com][:col_com]).replace(string, '')
+        if not sub_line.isspace():
+            sub_line = sub_line.rstrip()
+        new_lines[line_com] = sub_line + new_lines[line_com][col_com:]
 
 
-def _com2ann(d, drop_None, drop_Ellipsis):
+def com2ann_impl(d: Data, drop_none: bool, drop_ellipsis: bool) -> str:
     new_lines = d.lines[:]
-    for lcom, line in enumerate(d.lines):
+    for line_com, line in enumerate(d.lines):
         match = re.search(TYPE_COM, line)
-        if match:
-            # strip " #  type  :  annotation  \n" -> "annotation  \n"
-            tp = match.group().lstrip()[1:].lstrip()[4:].lstrip()[1:].lstrip()
-            submatch = re.search(TRAIL_OR_COM, tp)
-            subcom = ''
-            if submatch and submatch.group():
-                subcom = submatch.group()
-                tp = tp[:submatch.start()]
-            if tp == 'ignore':
-                continue
-            ccom = match.start()
-            if not any(d.tokens[i].exact_type == tokenize.COMMENT
-                       for i in d.ttab[lcom + 1]):
-                d.fail.append(lcom)
-                continue  # type comment inside string
-            lstart = find_start(d, lcom)
-            stmt_str = dedent(''.join(d.lines[lstart:lcom + 1]))
-            try:
-                stmt = ast.parse(stmt_str)
-            except SyntaxError:
-                d.fail.append(lcom)
-                continue  # for or with statements
-            if not check_target(stmt):
-                d.fail.append(lcom)
-                continue
+        if not match:
+            continue
 
-            d.success.append(lcom)
-            val = stmt.body[0].value
+        # strip " #  type  :  annotation  \n" -> "annotation  \n"
+        typ = match.group().lstrip()[1:].lstrip()[4:].lstrip()[1:].lstrip()
+        sub_match = re.search(TRAIL_OR_COM, typ)
+        sub_comment = ''
+        if sub_match and sub_match.group():
+            sub_comment = sub_match.group()
+            typ = typ[:sub_match.start()]
+        if typ == 'ignore':
+            continue
+        col_com = match.start()
+        if not any(d.tokens[i].exact_type == tokenize.COMMENT
+                   for i in d.token_tab[line_com + 1]):
+            d.fail.append(line_com)
+            continue  # type comment inside string
+        line_start = find_start(d, line_com)
+        stmt_str = dedent(''.join(d.lines[line_start:line_com + 1]))
+        try:
+            stmt = ast.parse(stmt_str)
+        except SyntaxError:
+            d.fail.append(line_com)
+            continue  # for or with statements
+        if not check_target(stmt):
+            d.fail.append(line_com)
+            continue
 
-            # writing output now
-            poseq = find_eq(d, lstart)
-            lval, cval = find_val(d, poseq)
-            ltarg, ctarg = find_targ(d, poseq)
+        d.success.append(line_com)
+        val = stmt.body[0].value
 
-            op_par = ''
-            cl_par = ''
-            if isinstance(val, ast.Tuple):
-                if d.lines[lval][cval] != '(':
-                    op_par = '('
-                    cl_par = ')'
-            # write the comment first
-            new_lines[lcom] = d.lines[lcom][:ccom].rstrip() + cl_par + subcom
-            ccom = len(d.lines[lcom][:ccom].rstrip())
+        # writing output now
+        pos_eq = find_eq(d, line_start)
+        line_val, col_val = find_val(d, pos_eq)
+        line_target, col_target = find_target(d, pos_eq)
 
-            string = False
-            if isinstance(val, ast.Tuple):
-                # t = 1, 2 -> t = (1, 2); only latter is allowed with annotation
-                free_place = int(new_lines[lval][cval - 2:cval] == '  ')
-                new_lines[lval] = (new_lines[lval][:cval - free_place] +
-                                   op_par + new_lines[lval][cval:])
-            elif isinstance(val, ast.Ellipsis) and drop_Ellipsis:
-                string = '...'
-            elif (isinstance(val, ast.NameConstant) and
-                  val.value is None and drop_None):
-                string = 'None'
-            if string:
-                trim(new_lines, string, ltarg, poseq, lcom, ccom)
+        op_par = ''
+        cl_par = ''
+        if isinstance(val, ast.Tuple):
+            if d.lines[line_val][col_val] != '(':
+                op_par = '('
+                cl_par = ')'
+        # write the comment first
+        new_lines[line_com] = d.lines[line_com][:col_com].rstrip() + cl_par + sub_comment
+        col_com = len(d.lines[line_com][:col_com].rstrip())
 
-            # finally write an annotation
-            new_lines[ltarg] = (new_lines[ltarg][:ctarg] +
-                                ': ' + tp + new_lines[ltarg][ctarg:])
+        string = False
+        if isinstance(val, ast.Tuple):
+            # t = 1, 2 -> t = (1, 2); only latter is allowed with annotation
+            free_place = int(new_lines[line_val][col_val - 2:col_val] == '  ')
+            new_lines[line_val] = (new_lines[line_val][:col_val - free_place] +
+                                   op_par + new_lines[line_val][col_val:])
+        elif isinstance(val, ast.Ellipsis) and drop_ellipsis:
+            string = '...'
+        elif (isinstance(val, ast.NameConstant) and
+              val.value is None and drop_none):
+            string = 'None'
+        if string:
+            trim(new_lines, string, line_target, pos_eq, line_com, col_com)
+
+        # finally write an annotation
+        new_lines[line_target] = (new_lines[line_target][:col_target] +
+                                  ': ' + typ + new_lines[line_target][col_target:])
     return ''.join(new_lines)
 
 
-def com2ann(code, *, drop_None=False, drop_Ellipsis=False, silent=False):
+def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
+            silent: bool = False) -> Optional[str]:
     """Translate type comments to type annotations in code.
 
     Take code as string and return this string where::
 
-      variable = value # type: annotation # real comment
+      variable = value  # type: annotation  # real comment
 
     is translated to::
 
-      variable: annotation = value # real comment
+      variable: annotation = value  # real comment
 
     For unsupported syntax cases, the type comments are
     left intact. If drop_None is True or if drop_Ellipsis
-    is True translate correcpondingly::
+    is True translate correspondingly::
 
-      variable = None # type: annotation
-      variable = ... # type: annotation
+      variable = None  # type: annotation
+      variable = ...  # type: annotation
 
     into::
 
       variable: annotation
 
     The tool tries to preserve code formatting as much as
-    possible, but an exact translation is not guarateed.
+    possible, but an exact translation is not guaranteed.
     A summary of translated comments id printed by default.
     """
     try:
@@ -233,8 +282,8 @@ def com2ann(code, *, drop_None=False, drop_Ellipsis=False, silent=False):
     rl = BytesIO(code.encode('utf-8')).readline
     tokens = list(tokenize.tokenize(rl))
 
-    data = _Data(lines, tokens)
-    new_code = _com2ann(data, drop_None, drop_Ellipsis)
+    data = Data(lines, tokens)
+    new_code = com2ann_impl(data, drop_none, drop_ellipsis)
 
     if not silent:
         if data.success:
@@ -249,24 +298,25 @@ def com2ann(code, *, drop_None=False, drop_Ellipsis=False, silent=False):
     return new_code
 
 
-def translate_file(infile, outfile, dnone, dell, silent):
+def translate_file(infile: str, outfile: str,
+                   drop_none: bool, drop_ellipsis: bool, silent: bool) -> None:
     try:
-        descr = tokenize.open(infile)
+        opened = tokenize.open(infile)
     except SyntaxError:
         print("Cannot open", infile)
         return
-    with descr as f:
+    with opened as f:
         code = f.read()
         enc = f.encoding
     if not silent:
         print('File:', infile)
-    new_code = com2ann(code, drop_None=dnone,
-                       drop_Ellipsis=dell, silent=silent)
+    new_code = com2ann(code, drop_none=drop_none,
+                       drop_ellipsis=drop_ellipsis, silent=silent)
     if new_code is None:
         print("SyntaxError in", infile)
         return
     with open(outfile, 'wb') as f:
-        f.write((new_code).encode(enc))
+        f.write(new_code.encode(enc))
 
 
 if __name__ == '__main__':
@@ -286,11 +336,11 @@ if __name__ == '__main__':
                         action="store_true")
     parser.add_argument("-n", "--drop-none",
                         help="drop any None as assignment value during\n"
-                        "translation if it is annotated by a type coment",
+                        "translation if it is annotated by a type comment",
                         action="store_true")
     parser.add_argument("-e", "--drop-ellipsis",
                         help="drop any Ellipsis (...) as assignment value during\n"
-                        "translation if it is annotated by a type coment",
+                        "translation if it is annotated by a type comment",
                         action="store_true")
     args = parser.parse_args()
     if args.outfile is None:
@@ -301,10 +351,10 @@ if __name__ == '__main__':
                        args.drop_none, args.drop_ellipsis, args.silent)
     else:
         for root, _, files in os.walk(args.infile):
-            for afile in files:
-                _, ext = os.path.splitext(afile)
+            for file in files:
+                _, ext = os.path.splitext(file)
                 if ext == '.py' or ext == '.pyi':
-                    fname = os.path.join(root, afile)
-                    translate_file(fname, fname,
+                    file_name = os.path.join(root, file)
+                    translate_file(file_name, file_name,
                                    args.drop_none, args.drop_ellipsis,
                                    args.silent)
