@@ -175,11 +175,11 @@ class FunctionTestCase(BaseTestCase):
             """)
         self.check(
             """
-            def add(a, b):  # type: (int, int) -> int  # type: ignore
+            def add(a, b):  # type: (int, int) -> int  # extra comment
                 pass
             """,
             """
-            def add(a: int, b: int) -> int:  # type: ignore
+            def add(a: int, b: int) -> int:  # extra comment
                 pass
             """)
 

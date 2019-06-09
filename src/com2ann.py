@@ -262,6 +262,10 @@ def strip_type_comment(line: str) -> str:
     return new_line
 
 
+def string_insert(line: str, extra: str, pos: int) -> str:
+    return line[:pos] + extra + line[pos:]
+
+
 def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
     lines = data.lines
@@ -272,12 +276,16 @@ def process_assign(comment: AssignData, data: FileData,
         if not (lines[comment.rvalue_start_line - 1][comment.rvalue_start_offset] == '(' and
                 lines[comment.rvalue_end_line - 1][comment.rvalue_end_offset - 1] == ')'):
             # We need to wrap rvalue in parentheses before Python 3.8.
-            # TODO: factor out insertion into a helper.
-            end_line = lines[comment.rvalue_start_line - 1]
-            lines[comment.rvalue_end_line - 1] = end_line[:comment.rvalue_end_offset] + ')' + end_line[comment.rvalue_end_offset:]
+            end_line = lines[comment.rvalue_end_line - 1]
+            lines[comment.rvalue_end_line - 1] = string_insert(end_line, ')', comment.rvalue_end_offset)
 
             start_line = lines[comment.rvalue_start_line - 1]
-            lines[comment.rvalue_start_line - 1] = start_line[:comment.rvalue_start_offset] + '(' + start_line[comment.rvalue_start_offset:]
+            lines[comment.rvalue_start_line - 1] = string_insert(start_line, '(', comment.rvalue_start_offset)
+
+            if comment.rvalue_end_line > comment.rvalue_start_line:
+                # Add a space to fix indentation after inserting paren.
+                for i in range(comment.rvalue_end_line, comment.rvalue_start_line, -1):
+                    lines[i - 1] = ' ' + lines[i - 1]
 
     elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
         # TODO: more tricky (multi-line) cases.
@@ -313,23 +321,27 @@ def insert_arg_type(line: str, arg: ArgComment) -> str:
 def process_func_def(func_type: FunctionData, data: FileData) -> None:
     lines = data.lines
 
-    removed = 0
+    # Find column where _actual_ colon is located.
+    ret_line = func_type.body_first_line - 1
+    ret_line -= 1
+    while not lines[ret_line].split('#')[0].strip():
+        ret_line -= 1
+
+    colon = None
+    for i in reversed(data.token_tab[ret_line + 1]):
+        if data.tokens[i].exact_type == tokenize.COLON:
+            _, colon = data.tokens[i].start
+            break
+    assert colon is not None
+
     for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
         if re.search(TYPE_COM, lines[i]):
             lines[i] = strip_type_comment(lines[i])
             if not lines[i].strip():
-                removed += 1
                 del lines[i]
 
     # Inserting return type is a bit dirty...
     if func_type.ret_type:
-        ret_line = func_type.body_first_line - removed - 1
-        ret_line -= 1
-        while not lines[ret_line].split('#')[0].strip():
-            ret_line -= 1
-
-        # TODO: use also tokenizer here to take care of possible comment.
-        colon = lines[ret_line].rindex(':')
         right_par = lines[ret_line][:colon].rindex(')')
         lines[ret_line] = lines[ret_line][:right_par + 1] + ' -> ' + func_type.ret_type + lines[ret_line][colon:]
 
