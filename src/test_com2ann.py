@@ -4,16 +4,15 @@ import unittest
 from com2ann import com2ann, TYPE_COM
 import re
 import sys
-
-PY36 = sys.version_info >= (3, 6)
+from textwrap import dedent
 
 
 class BaseTestCase(unittest.TestCase):
 
     def check(self, code, expected, n=False, e=False):
-        self.assertEqual(com2ann(code,
+        self.assertEqual(com2ann(dedent(code),
                          drop_none=n, drop_ellipsis=e, silent=True),
-                         expected)
+                         dedent(expected))
 
 
 class SimpleTestCase(BaseTestCase):
@@ -21,15 +20,14 @@ class SimpleTestCase(BaseTestCase):
 
     def test_basics(self):
         self.check("z = 5", "z = 5")
-        if PY36:
-            self.check("z: int = 5", "z: int = 5")
+        self.check("z: int = 5", "z: int = 5")
         self.check("z = 5 # type: int", "z: int = 5")
         self.check("z = 5 # type: int # comment",
                    "z: int = 5 # comment")
 
     def test_type_ignore(self):
-        self.check("foobar = foobaz() #type: ignore",
-                   "foobar = foobaz() #type: ignore")
+        self.check("foobar = foo_baz() #type: ignore",
+                   "foobar = foo_baz() #type: ignore")
         self.check("a = 42 #type: ignore #comment",
                    "a = 42 #type: ignore #comment")
 
@@ -65,6 +63,7 @@ class SimpleTestCase(BaseTestCase):
     def test_wrong(self):
         self.check("#type : str", "#type : str")
         self.check("x==y #type: bool", None)  # this is syntax error
+        self.check("x==y ##type: bool", "x==y ##type: bool")  # this is OK
 
     def test_pattern(self):
         for line in ["#type: int", "  # type:  str[:] # com"]:
@@ -72,187 +71,121 @@ class SimpleTestCase(BaseTestCase):
         for line in ["", "#", "# comment", "#type", "type int:"]:
             self.assertFalse(re.search(TYPE_COM, line))
 
+    def test_uneven_spacing(self):
+        self.check('x = 5 #type    : int # this one is OK',
+                   'x: int = 5 # this one is OK')
 
-class BigTestCase(BaseTestCase):
-    # Tests for really crazy formatting, to be sure
-    # that script works reasonably in extreme situations
+    def test_coding_kept(self):
+        self.check(
+            """
+            # -*- coding: utf-8 -*- # this should not be spoiled
+            '''
+            Docstring here
+            '''
 
-    def test_crazy(self):
-        self.maxDiff = None
-        self.check(crazy_code, big_result, False, False)
-        self.check(crazy_code, big_result_ne, True, True)
+            import testmod
+            from typing import Optional
 
+            coding = None  # type: Optional[str]
+            """,
+            """
+            # -*- coding: utf-8 -*- # this should not be spoiled
+            '''
+            Docstring here
+            '''
 
-crazy_code = """\
-# -*- coding: utf-8 -*- # this should not be spoiled
-'''
-Docstring here
-'''
+            import testmod
+            from typing import Optional
 
-import testmod
-x = 5 #type    : int # this one is OK
-ttt \\
-    = \\
-        1.0, \\
-        2.0, \\
-        3.0, #type: Tuple[float, float, float]
-with foo(x==1) as f: #type: str
-    print(f)
+            coding: Optional[str] = None
+            """)
 
-for i, j in my_inter(x=1): # type: ignore
-    i + j ## type: int # what about this
+    def test_multi_line_tuple_value(self):
+        self.check(
+            """
+            ttt \\
+                 = \\
+                   1.0, \\
+                   2.0, \\
+                   3.0, #type: Tuple[float, float, float]
+            """,
+            """
+            ttt: Tuple[float, float, float] \\
+                 = \\
+                   (1.0, \\
+                    2.0, \\
+                    3.0,)
+            """)
 
-x = y = z = 1 # type: int
-x, y, z = [], [], []  # type: (List[int], List[int], List[str])
-class C:
+    def test_with(self):
+        # TODO: support this.
+        self.check(
+            """
+            with foo(x==1) as f: #type: str
+                print(f)
+            """,
+            """
+            with foo(x==1) as f: #type: str
+                print(f)
+            """)
 
+    def test_for(self):
+        # TODO: support this.
+        self.check(
+            """
+            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """,
+            """
+            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """)
 
-    l[f(x
-        =1)] = [
+    def test_complex_targets(self):
+        self.check("x = y = z = 1 # type: int",
+                   "x = y = z = 1 # type: int")
+        self.check("x, y, z = [], [], []  # type: (List[int], List[int], List[str])",
+                   "x, y, z = [], [], []  # type: (List[int], List[int], List[str])")
+        self.check("self.x = None  # type: int  # type: ignore",
+                   "self.x: int  # type: ignore",
+                   True, False)
+        self.check("self.x[0] = []  # type: int  # type: ignore",
+                   "self.x[0]: int = []  # type: ignore")
 
-         1,
-         2,
-         ]  # type: List[int]
+    def test_multi_line_assign(self):
+        self.check(
+            """
+            class C:
 
+                l[f(x
+                    =1)] = [
 
-    (C.x[1]) = \\
-        42 == 5# type: bool
-lst[...] = \\
-    ((\\
-...)) # type: int # comment ..
+                     g(y), # type: ignore
+                     2,
+                     ]  # type: List[int]
+            """,
+            """
+            class C:
 
-y = ... # type: int # comment ...
-z = ...
-##type: int
+                l[f(x
+                    =1)]: List[int] = [
 
+                     g(y), # type: ignore
+                     2,
+                     ]
+            """)
 
-#DONE placement of annotation after target rather than before =
+    def test_parenthesized_lhs(self):
+        self.check(
+            """
+            (C.x[1]) = \\
+                42 == 5# type: bool
+            """,
+            """
+            (C.x[1]): bool = \\
+                42 == 5
+            """)
 
-TD.x[1]  \\
-    = 0 == 5# type: bool
-
-TD.y[1] =5 == 5# type: bool # one more here
-F[G(x == y,
-
-# hm...
-
-    z)]\\
-      = None # type: OMG[int] # comment: None
-x = None#type:int   #comment : None"""
-
-big_result = """\
-# -*- coding: utf-8 -*- # this should not be spoiled
-'''
-Docstring here
-'''
-
-import testmod
-x: int = 5 # this one is OK
-ttt: Tuple[float, float, float] \\
-    = \\
-       (1.0, \\
-        2.0, \\
-        3.0,)
-with foo(x==1) as f: #type: str
-    print(f)
-
-for i, j in my_inter(x=1): # type: ignore
-    i + j ## type: int # what about this
-
-x = y = z = 1 # type: int
-x, y, z = [], [], []  # type: (List[int], List[int], List[str])
-class C:
-
-
-    l[f(x
-        =1)]: List[int] = [
-
-         1,
-         2,
-         ]
-
-
-    (C.x[1]): bool = \\
-        42 == 5
-lst[...]: int = \\
-    ((\\
-...)) # comment ..
-
-y: int = ... # comment ...
-z = ...
-##type: int
-
-
-#DONE placement of annotation after target rather than before =
-
-TD.x[1]: bool  \\
-    = 0 == 5
-
-TD.y[1]: bool =5 == 5 # one more here
-F[G(x == y,
-
-# hm...
-
-    z)]: OMG[int]\\
-      = None # comment: None
-x: int = None   #comment : None"""
-
-big_result_ne = """\
-# -*- coding: utf-8 -*- # this should not be spoiled
-'''
-Docstring here
-'''
-
-import testmod
-x: int = 5 # this one is OK
-ttt: Tuple[float, float, float] \\
-    = \\
-       (1.0, \\
-        2.0, \\
-        3.0,)
-with foo(x==1) as f: #type: str
-    print(f)
-
-for i, j in my_inter(x=1): # type: ignore
-    i + j ## type: int # what about this
-
-x = y = z = 1 # type: int
-x, y, z = [], [], []  # type: (List[int], List[int], List[str])
-class C:
-
-
-    l[f(x
-        =1)]: List[int] = [
-
-         1,
-         2,
-         ]
-
-
-    (C.x[1]): bool = \\
-        42 == 5
-lst[...]: int \\
-    \\
- # comment ..
-
-y: int # comment ...
-z = ...
-##type: int
-
-
-#DONE placement of annotation after target rather than before =
-
-TD.x[1]: bool  \\
-    = 0 == 5
-
-TD.y[1]: bool =5 == 5 # one more here
-F[G(x == y,
-
-# hm...
-
-    z)]: OMG[int]\\
-       # comment: None
-x: int   #comment : None"""
 
 if __name__ == '__main__':
     unittest.main()
