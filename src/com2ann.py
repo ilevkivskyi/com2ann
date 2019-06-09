@@ -30,18 +30,29 @@ TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
 
 
 @dataclass
-class AssignComment:
+class AssignData:
     type_comment: str
+
     lvalue_end_line: int
     lvalue_end_offset: int
+
+    rvalue_start_line: int
+    rvalue_start_offset: int
     rvalue_end_line: int
+    rvalue_end_offset: int
+
+    tuple_rvalue: bool = False
+    none_rvalue: bool = False
+    ellipsis_rvalue: bool = False
 
 
 @dataclass
 class ArgComment:
     type_comment: str
+
     arg_line: int
     arg_end_offset: int
+
     has_default: bool = False
 
 
@@ -49,6 +60,7 @@ class ArgComment:
 class FunctionData:
     arg_types: List[ArgComment]
     ret_type: Optional[str]
+
     header_start_line: int
     body_first_line: int
 
@@ -78,15 +90,20 @@ class FileData:
 class TypeCommentCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         super().__init__()
-        self.found: List[Union[AssignComment, FunctionData]] = []
+        self.found: List[Union[AssignData, FunctionData]] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
         if s.type_comment:
             # TODO: what if more targets?
             target = s.targets[0]
-            found = AssignComment(s.type_comment,
-                                  target.end_lineno, target.end_col_offset,
-                                  s.value.end_lineno)
+            tuple_rvalue = isinstance(s.value, ast.Tuple)
+            none_rvalue = isinstance(s.value, ast.Constant) and s.value.value is None
+            ellipsis_rvalue = isinstance(s.value, ast.Constant) and s.value.value is Ellipsis
+            found = AssignData(s.type_comment,
+                               target.end_lineno, target.end_col_offset,
+                               s.value.lineno, s.value.col_offset,
+                               s.value.end_lineno, s.value.end_col_offset,
+                               tuple_rvalue, none_rvalue, ellipsis_rvalue)
             self.found.append(found)
 
     def visit_FunctionDef(self, fdef: ast.FunctionDef) -> None:
@@ -172,10 +189,16 @@ class TypeCommentCollector(ast.NodeVisitor):
 
 # TODO: use tokenizer for split_function_comment() and split_sub_comment().
 
+def split_sub_comment(comment: str) -> str:
+    # TODO: take care of Literal['#'].
+    return comment.split('#', maxsplit=1)[0].rstrip()
+
+
 def split_function_comment(comment: str) -> Tuple[List[str], str]:
     # TODO: ()->int vs () -> int -- preserve spacing (maybe also # type:int vs # type: int)
     # TODO: fail gracefully on invalid types.
-    typ = comment.split('#', maxsplit=1)[0].rstrip()
+
+    typ = split_sub_comment(comment)
     assert '->' in typ, 'Invalid function type'
     arg_list, ret = typ.split('->')
 
@@ -207,12 +230,15 @@ def split_function_comment(comment: str) -> Tuple[List[str], str]:
 
 
 def strip_type_comment(line: str) -> str:
+    # TODO: keep # type: ignore!
     match = re.search(TYPE_COM, line)
     assert match
     matched = line[match.start():]
     matched = matched.lstrip()[1:]
 
     rest = line[:match.start()]
+
+    # TODO: take care of Literal['#'] also here.
     sub_comment = re.search(TRAIL_OR_COM, matched)
     assert sub_comment
     if rest:
@@ -223,21 +249,39 @@ def strip_type_comment(line: str) -> str:
     return new_line
 
 
-def process_assign(comment: AssignComment, data: FileData,
+def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
     lines = data.lines
     lines[comment.rvalue_end_line - 1] = strip_type_comment(lines[comment.rvalue_end_line - 1])
 
+    if comment.tuple_rvalue:
+        # TODO: take care of (1, 2), (3, 4) with matching pars.
+        if not (lines[comment.rvalue_start_line - 1][comment.rvalue_start_offset] == '(' and
+                lines[comment.rvalue_end_line - 1][comment.lvalue_end_offset - 1] == ')'):
+            # We need to wrap rvalue in parentheses before Python 3.8.
+            start_line = lines[comment.rvalue_start_line - 1]
+            end_line = lines[comment.rvalue_start_line - 1]
+
+            # TODO: factor out insertion into a helper.
+            lines[comment.rvalue_end_line - 1] = end_line[:comment.rvalue_end_offset] + ')' + end_line[comment.rvalue_end_offset:]
+            lines[comment.rvalue_start_line - 1] = start_line[:comment.rvalue_start_offset] + '(' + end_line[comment.rvalue_start_offset:]
+
+    elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
+        # TODO: more tricky (multi-line) cases.
+        assert comment.lvalue_end_line == comment.rvalue_end_line
+        line = lines[comment.lvalue_end_line]
+        lines[comment.lvalue_end_line] = line[:comment.lvalue_end_offset] + line[comment.rvalue_end_offset:]
+
     lvalue_line = lines[comment.lvalue_end_line - 1]
-    # TODO: take care of Literal['#'].
-    typ = comment.type_comment.split('#', maxsplit=1)[0].rstrip()
+
+    typ = split_sub_comment(comment.type_comment)
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
                                           ': ' + typ +
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
 def insert_arg_type(line: str, arg: ArgComment) -> str:
-    typ = arg.type_comment.split('#', maxsplit=1)[0].rstrip()
+    typ = split_sub_comment(arg.type_comment)
 
     new_line = line[:arg.arg_end_offset] + ': ' + typ
 
@@ -287,7 +331,7 @@ def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
     found = list(reversed(finder.found))
 
     for item in found:
-        if isinstance(item, AssignComment):
+        if isinstance(item, AssignData):
             process_assign(item, data, drop_none, drop_ellipsis)
         elif isinstance(item, FunctionData):
             process_func_def(item, data)
