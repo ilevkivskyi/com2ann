@@ -8,9 +8,9 @@ from textwrap import dedent
 
 class BaseTestCase(unittest.TestCase):
 
-    def check(self, code, expected, n=False, e=False):
+    def check(self, code, expected, n=False, e=False, w=0):
         self.assertEqual(com2ann(dedent(code),
-                         drop_none=n, drop_ellipsis=e, silent=True),
+                         drop_none=n, drop_ellipsis=e, silent=True, wrap_sig=w),
                          dedent(expected) if expected is not None else None)
 
 
@@ -298,6 +298,35 @@ class FunctionTestCase(BaseTestCase):
             ) -> Literal['#']:
                 pass
             """)
+
+    def test_wrap_lines(self):
+        self.check(
+            """
+            def embezzle(self, account, funds=MANY, *fake_receipts):
+                # type: (str, int, *str) -> None  # some comment
+                pass
+            """,
+            """
+            def embezzle(self,
+                         account: str,
+                         funds: int = MANY,
+                         *fake_receipts: str) -> None:
+                # some comment
+                pass
+            """, False, False, 10)
+        self.check(
+            """
+            def embezzle(self, account, funds=MANY, *fake_receipts):  # type: ignore
+                # type: (str, int, *str) -> None
+                pass
+            """,
+            """
+            def embezzle(self,  # type: ignore
+                         account: str,
+                         funds: int = MANY,
+                         *fake_receipts: str) -> None:
+                pass
+            """, False, False, 10)
 
 
 class ForAndWithTestCase(BaseTestCase):

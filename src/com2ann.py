@@ -24,7 +24,10 @@ from typing import List, DefaultDict, Tuple, Optional, Union
 __all__ = ['com2ann', 'TYPE_COM']
 
 TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
+
+# For internal use only.
 _TRAILER = re.compile(r'\s*$', flags=re.DOTALL)
+_NICE_IGNORE = re.compile(r'\s*# type: ignore\s*$', flags=re.DOTALL)
 
 
 @dataclass
@@ -112,7 +115,8 @@ class TypeCommentCollector(ast.NodeVisitor):
                 fdef.args.vararg and fdef.vararg.type_comment or
                 fdef.args.kwarg and fdef.args.kwarg.type_comment):
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
-            num_kw_non_defs = len(fdef.args.kwonlyargs) - len([d for d in fdef.args.kw_defaults if d is not None])
+            num_kw_non_defs = (len(fdef.args.kwonlyargs) -
+                               len([d for d in fdef.args.kw_defaults if d is not None]))
 
             args = self.process_per_arg_comments(fdef, num_non_defs, num_kw_non_defs)
 
@@ -287,10 +291,12 @@ def process_assign(comment: AssignData, data: FileData,
                 lines[comment.rvalue_end_line - 1][comment.rvalue_end_offset - 1] == ')'):
             # We need to wrap rvalue in parentheses before Python 3.8.
             end_line = lines[comment.rvalue_end_line - 1]
-            lines[comment.rvalue_end_line - 1] = string_insert(end_line, ')', comment.rvalue_end_offset)
+            lines[comment.rvalue_end_line - 1] = string_insert(end_line, ')',
+                                                               comment.rvalue_end_offset)
 
             start_line = lines[comment.rvalue_start_line - 1]
-            lines[comment.rvalue_start_line - 1] = string_insert(start_line, '(', comment.rvalue_start_offset)
+            lines[comment.rvalue_start_line - 1] = string_insert(start_line, '(',
+                                                                 comment.rvalue_start_offset)
 
             if comment.rvalue_end_line > comment.rvalue_start_line:
                 # Add a space to fix indentation after inserting paren.
@@ -302,7 +308,8 @@ def process_assign(comment: AssignData, data: FileData,
         # TODO: more tricky (multi-line) cases.
         assert comment.lvalue_end_line == comment.rvalue_end_line
         line = lines[comment.lvalue_end_line - 1]
-        lines[comment.lvalue_end_line - 1] = line[:comment.lvalue_end_offset] + line[comment.rvalue_end_offset:]
+        lines[comment.lvalue_end_line - 1] = (line[:comment.lvalue_end_offset] +
+                                              line[comment.rvalue_end_offset:])
 
     lvalue_line = lines[comment.lvalue_end_line - 1]
 
@@ -329,7 +336,56 @@ def insert_arg_type(line: str, arg: ArgComment) -> str:
     return new_line + ' = ' + rest
 
 
-def process_func_def(func_type: FunctionData, data: FileData) -> None:
+def wrap_function_header(header: str) -> List[str]:
+    # TODO: use tokenizer to guard against Literal[','].
+    parts: List[str] = []
+    next_part = ''
+    nested = 0
+    indent: Optional[int] = None
+
+    for i, c in enumerate(header):
+        if c in '([{':
+            nested += 1
+            if c == '(' and indent is None:
+                indent = i + 1
+        if c in ')]}':
+            nested -= 1
+        if c == ',' and nested == 1:
+            next_part += c
+            parts.append(next_part)
+            next_part = ''
+        else:
+            next_part += c
+
+    parts.append(next_part)
+
+    if len(parts) == 1:
+        return parts
+
+    # Indent all the wrapped lines.
+    parts = [parts[0]] + [' ' * indent + p.lstrip(' \t') for p in parts[1:]]
+
+    # Add end lines like in the original header.
+    trailer = re.search(_TRAILER, header)
+    assert trailer
+    end_line = header[trailer.start():].lstrip(' \t')
+    parts = [p + end_line for p in parts[:-1]] + [parts[-1]]
+
+    # TODO: handle type ignores better.
+    ignore = re.search(_NICE_IGNORE, parts[-1])
+    if ignore:
+        # We should keep # type: ignore on the first line of the wrapped header.
+        last = parts[-1]
+        first = parts[0]
+        first_trailer = re.search(_TRAILER, first)
+        assert first_trailer
+        parts[0] = first[:first_trailer.start()] + ignore.group()
+        parts[-1] = last[:ignore.start()] + first_trailer.group()
+
+    return parts
+
+
+def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> None:
     lines = data.lines
 
     # Find column where _actual_ colon is located.
@@ -354,13 +410,21 @@ def process_func_def(func_type: FunctionData, data: FileData) -> None:
     # Inserting return type is a bit dirty...
     if func_type.ret_type:
         right_par = lines[ret_line][:colon].rindex(')')
-        lines[ret_line] = lines[ret_line][:right_par + 1] + ' -> ' + func_type.ret_type + lines[ret_line][colon:]
+        lines[ret_line] = (lines[ret_line][:right_par + 1] +
+                           ' -> ' + func_type.ret_type +
+                           lines[ret_line][colon:])
 
     for arg in reversed(func_type.arg_types):
         lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg)
 
+    if ret_line == func_type.header_start_line - 1:
+        header = data.lines[ret_line]
+        if wrap_sig and len(header) > wrap_sig:
+            data.lines[ret_line:ret_line + 1] = wrap_function_header(header)
 
-def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
+
+def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool,
+                 wrap_sig: int = 0) -> str:
     finder = TypeCommentCollector()
     finder.visit(data.tree)
 
@@ -370,7 +434,7 @@ def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
         if isinstance(item, AssignData):
             process_assign(item, data, drop_none, drop_ellipsis)
         elif isinstance(item, FunctionData):
-            process_func_def(item, data)
+            process_func_def(item, data, wrap_sig)
 
     return ''.join(data.lines)
 
@@ -394,7 +458,7 @@ def check_target(assign: ast.Assign) -> bool:
 
 
 def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
-            silent: bool = False) -> Optional[str]:
+            silent: bool = False, wrap_sig: int = 0) -> Optional[str]:
     """Translate type comments to type annotations in code.
 
     Take code as string and return this string where::
@@ -430,7 +494,7 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
     tokens = list(tokenize.tokenize(rl))
 
     data = FileData(lines, tokens, tree)
-    new_code = com2ann_impl(data, drop_none, drop_ellipsis)
+    new_code = com2ann_impl(data, drop_none, drop_ellipsis, wrap_sig)
 
     if not silent:
         if data.success:
