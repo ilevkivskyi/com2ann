@@ -257,20 +257,20 @@ def process_assign(comment: AssignData, data: FileData,
     if comment.tuple_rvalue:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
         if not (lines[comment.rvalue_start_line - 1][comment.rvalue_start_offset] == '(' and
-                lines[comment.rvalue_end_line - 1][comment.lvalue_end_offset - 1] == ')'):
+                lines[comment.rvalue_end_line - 1][comment.rvalue_end_offset - 1] == ')'):
             # We need to wrap rvalue in parentheses before Python 3.8.
-            start_line = lines[comment.rvalue_start_line - 1]
-            end_line = lines[comment.rvalue_start_line - 1]
-
             # TODO: factor out insertion into a helper.
+            end_line = lines[comment.rvalue_start_line - 1]
             lines[comment.rvalue_end_line - 1] = end_line[:comment.rvalue_end_offset] + ')' + end_line[comment.rvalue_end_offset:]
-            lines[comment.rvalue_start_line - 1] = start_line[:comment.rvalue_start_offset] + '(' + end_line[comment.rvalue_start_offset:]
+
+            start_line = lines[comment.rvalue_start_line - 1]
+            lines[comment.rvalue_start_line - 1] = start_line[:comment.rvalue_start_offset] + '(' + start_line[comment.rvalue_start_offset:]
 
     elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
         # TODO: more tricky (multi-line) cases.
         assert comment.lvalue_end_line == comment.rvalue_end_line
-        line = lines[comment.lvalue_end_line]
-        lines[comment.lvalue_end_line] = line[:comment.lvalue_end_offset] + line[comment.rvalue_end_offset:]
+        line = lines[comment.lvalue_end_line - 1]
+        lines[comment.lvalue_end_line - 1] = line[:comment.lvalue_end_offset] + line[comment.rvalue_end_offset:]
 
     lvalue_line = lines[comment.lvalue_end_line - 1]
 
@@ -570,7 +570,7 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
     """
     try:
         # We want to work only with file without syntax errors
-        tree = ast.parse(code, type_comment=True)
+        tree = ast.parse(code, type_comments=True)
     except SyntaxError:
         return None
     lines = code.splitlines(keepends=True)

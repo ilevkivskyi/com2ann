@@ -64,7 +64,7 @@ class SimpleTestCase(BaseTestCase):
 
     def test_wrong(self):
         self.check("#type : str", "#type : str")
-        self.check("x==y #type: bool", "x==y #type: bool")
+        self.check("x==y #type: bool", None)  # this is syntax error
 
     def test_pattern(self):
         for line in ["#type: int", "  # type:  str[:] # com"]:
@@ -100,7 +100,7 @@ with foo(x==1) as f: #type: str
     print(f)
 
 for i, j in my_inter(x=1): # type: ignore
-    i + j # type: int # what about this
+    i + j ## type: int # what about this
 
 x = y = z = 1 # type: int
 x, y, z = [], [], []  # type: (List[int], List[int], List[str])
@@ -123,7 +123,7 @@ lst[...] = \\
 
 y = ... # type: int # comment ...
 z = ...
-#type: int
+##type: int
 
 
 #DONE placement of annotation after target rather than before =
@@ -157,7 +157,7 @@ with foo(x==1) as f: #type: str
     print(f)
 
 for i, j in my_inter(x=1): # type: ignore
-    i + j # type: int # what about this
+    i + j ## type: int # what about this
 
 x = y = z = 1 # type: int
 x, y, z = [], [], []  # type: (List[int], List[int], List[str])
@@ -180,7 +180,7 @@ lst[...]: int = \\
 
 y: int = ... # comment ...
 z = ...
-#type: int
+##type: int
 
 
 #DONE placement of annotation after target rather than before =
@@ -214,7 +214,7 @@ with foo(x==1) as f: #type: str
     print(f)
 
 for i, j in my_inter(x=1): # type: ignore
-    i + j # type: int # what about this
+    i + j ## type: int # what about this
 
 x = y = z = 1 # type: int
 x, y, z = [], [], []  # type: (List[int], List[int], List[str])
@@ -237,7 +237,7 @@ lst[...]: int \\
 
 y: int # comment ...
 z = ...
-#type: int
+##type: int
 
 
 #DONE placement of annotation after target rather than before =
