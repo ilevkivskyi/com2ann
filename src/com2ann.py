@@ -19,8 +19,9 @@ from tokenize import TokenInfo
 from collections import defaultdict
 from textwrap import dedent
 from io import BytesIO
+from dataclasses import dataclass
 
-from typing import List, DefaultDict, Tuple, Optional
+from typing import List, DefaultDict, Tuple, Optional, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -28,31 +29,280 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:.*$', flags=re.DOTALL)
 TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
 
 
-class Data:
+@dataclass
+class AssignComment:
+    type_comment: str
+    lvalue_end_line: int
+    lvalue_end_offset: int
+    rvalue_end_line: int
+
+
+@dataclass
+class ArgComment:
+    type_comment: str
+    arg_line: int
+    arg_end_offset: int
+    has_default: bool = False
+
+
+@dataclass
+class FunctionData:
+    arg_types: List[ArgComment]
+    ret_type: Optional[str]
+    header_start_line: int
+    body_first_line: int
+
+
+class FileData:
     """Internal class describing global data on file."""
-    def __init__(self, lines: List[str], tokens: List[TokenInfo]):
+    def __init__(self, lines: List[str], tokens: List[TokenInfo], tree: ast.AST) -> None:
         # Source code lines.
         self.lines = lines
         # Tokens for the source code.
         self.tokens = tokens
+        # Parsed tree (with type_comments = True).
+        self.tree = tree
+
         # Map line number to token numbers. For example {1: [0, 1, 2, 3], 2: [4, 5]}
         # means that first to fourth tokens are on the first line.
         token_tab: DefaultDict[int, List[int]] = defaultdict(list)
         for i, tok in enumerate(tokens):
             token_tab[tok.start[0]].append(i)
         self.token_tab = token_tab
+
+        # Basic translation logging.
         self.success: List[int] = []  # list of lines where type comments where processed
         self.fail: List[int] = []  # list of lines where type comments where rejected
 
 
-def skip_blank(d: Data, line: int) -> int:
+class TypeCommentCollector(ast.NodeVisitor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.found: List[Union[AssignComment, FunctionData]] = []
+
+    def visit_Assign(self, s: ast.Assign) -> None:
+        if s.type_comment:
+            # TODO: what if more targets?
+            target = s.targets[0]
+            found = AssignComment(s.type_comment,
+                                  target.end_lineno, target.end_col_offset,
+                                  s.value.end_lineno)
+            self.found.append(found)
+
+    def visit_FunctionDef(self, fdef: ast.FunctionDef) -> None:
+        if (fdef.type_comment or
+                any(a.type_comment for a in fdef.args.args) or
+                any(a.type_comment for a in fdef.args.kwonlyargs) or
+                fdef.args.vararg and fdef.vararg.type_comment or
+                fdef.args.kwarg and fdef.args.kwarg.type_comment):
+            num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
+            num_kw_non_defs = len(fdef.args.kwonlyargs) - len([d for d in fdef.args.kw_defaults if d is not None])
+
+            args: List[ArgComment] = []
+
+            for i, a in enumerate(fdef.args.args):
+                if a.type_comment:
+                    args.append(ArgComment(a.type_comment,
+                                           a.lineno, a.end_col_offset,
+                                           i >= num_non_defs))
+            if fdef.args.vararg and fdef.args.vararg.type_comment:
+                args.append(ArgComment(fdef.args.vararg.type_comment,
+                                       fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
+                                       False))
+
+            for i, a in enumerate(fdef.args.kwonlyargs):
+                if a.type_comment:
+                    args.append(ArgComment(a.type_comment,
+                                           a.lineno, a.end_col_offset,
+                                           i >= num_kw_non_defs))
+            if fdef.args.kwarg and fdef.args.kwarg.type_comment:
+                args.append(ArgComment(fdef.args.kwarg.type_comment,
+                                       fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
+                                       False))
+
+            if fdef.type_comment:
+                f_args, ret = split_function_comment(fdef.type_comment)
+
+            else:
+                f_args = [], ret = None
+
+            if args and f_args:
+                # TODO: handle gracefully.
+                raise Exception('Bad')
+
+            if args:
+                self.found.append(FunctionData(args, ret, fdef.lineno, fdef.body[0].lineno))
+            elif not f_args:
+                self.found.append(FunctionData([], ret, fdef.lineno, fdef.body[0].lineno))
+            else:
+                tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
+                if fdef.args.vararg:
+                    tot_args += 1
+                if fdef.args.kwarg:
+                    tot_args += 1
+
+                if len(f_args) not in (tot_args, tot_args - 1):
+                    # TODO: handle gracefully.
+                    raise Exception('Bad')
+
+                if len(f_args) == tot_args - 1:
+                    iter_args = fdef.args.args[1:]
+                else:
+                    iter_args = fdef.args.args
+
+                if fdef.args.vararg:
+                    iter_args.append(fdef.args.vararg)
+                iter_args.extend(fdef.args.kwonlyargs)
+                if fdef.args.kwarg:
+                    iter_args.append(fdef.args.kwarg)
+
+                for typ, a in zip(f_args, iter_args):
+                    has_default = False
+                    if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
+                        has_default = True
+                    if a in fdef.args.kwonlyargs and fdef.args.kwonlyargs.index(a) >= num_kw_non_defs:
+                        has_default = True
+                    args.append(ArgComment(typ,
+                                           a.lineno, a.end_col_offset,
+                                           has_default))
+
+                self.found.append(FunctionData(args, ret, fdef.lineno, fdef.body[0].lineno))
+        self.generic_visit(fdef)
+
+
+# TODO: use tokenizer for split_function_comment() and split_sub_comment().
+
+def split_function_comment(comment: str) -> Tuple[List[str], str]:
+    # TODO: ()->int vs () -> int -- preserve spacing (maybe also # type:int vs # type: int)
+    # TODO: fail gracefully on invalid types.
+    typ = comment.split('#', maxsplit=1)[0].rstrip()
+    assert '->' in typ, 'Invalid function type'
+    arg_list, ret = typ.split('->')
+
+    arg_list = arg_list.strip()
+    ret = ret.strip()
+
+    assert arg_list[0] == '(' and arg_list[-1] == ')'
+    arg_list = arg_list[1:-1]
+
+    args: List[str] = []
+
+    next_arg = ''
+    nested = 0
+    for c in arg_list:
+        if c in '([{':
+            nested += 1
+        if c in ')]}':
+            nested -= 1
+        if c == ',' and not nested:
+            args.append(next_arg.strip())
+            next_arg = ''
+        else:
+            next_arg += c
+
+    if next_arg:
+        args.append(next_arg.strip())
+
+    return [a.lstrip('*') for a in args if a != '...'], ret
+
+
+def strip_type_comment(line: str) -> str:
+    match = re.search(TYPE_COM, line)
+    assert match
+    matched = line[match.start():]
+    matched = matched.lstrip()[1:]
+
+    rest = line[:match.start()]
+    sub_comment = re.search(TRAIL_OR_COM, matched)
+    assert sub_comment
+    if rest:
+        new_line = rest + matched[sub_comment.start():]
+    else:
+        # A type comment on line of its own.
+        new_line = line[:line.index('#')] + matched[sub_comment.start():].lstrip(' \t')
+    return new_line
+
+
+def process_assign(comment: AssignComment, data: FileData,
+                   drop_none: bool, drop_ellipsis: bool) -> None:
+    lines = data.lines
+    lines[comment.rvalue_end_line - 1] = strip_type_comment(lines[comment.rvalue_end_line - 1])
+
+    lvalue_line = lines[comment.lvalue_end_line - 1]
+    # TODO: take care of Literal['#'].
+    typ = comment.type_comment.split('#', maxsplit=1)[0].rstrip()
+    lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
+                                          ': ' + typ +
+                                          lvalue_line[comment.lvalue_end_offset:])
+
+
+def insert_arg_type(line: str, arg: ArgComment) -> str:
+    typ = arg.type_comment.split('#', maxsplit=1)[0].rstrip()
+
+    new_line = line[:arg.arg_end_offset] + ': ' + typ
+
+    rest = line[arg.arg_end_offset:]
+    if not arg.has_default:
+        return new_line + rest
+
+    # Here we are a bit opinionated about spacing (see PEP 8).
+    rest = rest.lstrip()
+    assert rest[0] == '=', (line, rest)
+    rest = rest[1:].lstrip()
+
+    return new_line + ' = ' + rest
+
+
+def process_func_def(func_type: FunctionData, data: FileData) -> None:
+    lines = data.lines
+
+    removed = 0
+    for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
+        if re.search(TYPE_COM, lines[i]):
+            lines[i] = strip_type_comment(lines[i])
+            if not lines[i].strip():
+                removed += 1
+                del lines[i]
+
+    # Inserting return type is a bit dirty...
+    if func_type.ret_type:
+        ret_line = func_type.body_first_line - removed - 1
+        ret_line -= 1
+        while not lines[ret_line].split('#')[0].strip():
+            ret_line -= 1
+
+        # TODO: use also tokenizer here to take care of possible comment.
+        colon = lines[ret_line].rindex(':')
+        right_par = lines[ret_line][:colon].rindex(')')
+        lines[ret_line] = lines[ret_line][:right_par + 1] + ' -> ' + func_type.ret_type + lines[ret_line][colon:]
+
+    for arg in reversed(func_type.arg_types):
+        lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg)
+
+
+def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
+    finder = TypeCommentCollector()
+    finder.visit(data.tree)
+
+    found = list(reversed(finder.found))
+
+    for item in found:
+        if isinstance(item, AssignComment):
+            process_assign(item, data, drop_none, drop_ellipsis)
+        elif isinstance(item, FunctionData):
+            process_func_def(item, data)
+
+    return ''.join(data.lines)
+
+
+def skip_blank(d: FileData, line: int) -> int:
     """Return first non-blank line number after `line`."""
     while not d.lines[line].strip():
         line += 1
     return line
 
 
-def find_start(d: Data, line_com: int) -> int:
+def find_start(d: FileData, line_com: int) -> int:
     """Find line where first char of the assignment target appears.
 
     `line_com` is the line where type comment was found.
@@ -88,7 +338,7 @@ def check_target(stmt: Module) -> bool:
     return False
 
 
-def find_eq(d: Data, line_start: int) -> Tuple[int, int]:
+def find_eq(d: FileData, line_start: int) -> Tuple[int, int]:
     """Find equal sign position starting from `line_start`.
 
     We need to be careful about not taking first assignment in d[f(x=1)] = 5.
@@ -110,7 +360,7 @@ def find_eq(d: Data, line_start: int) -> Tuple[int, int]:
     return line, col
 
 
-def find_val(d: Data, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
+def find_val(d: FileData, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
     """Find position of first character of the assignment r.h.s.
 
     `pos_eq` is the position of equality sign in the assignment.
@@ -126,7 +376,7 @@ def find_val(d: Data, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
     return line, col
 
 
-def find_target(d: Data, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
+def find_target(d: FileData, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
     """Find position of last character of the target (annotation goes here)."""
     line, col = pos_eq
     # Walk backward from the equality sign.
@@ -177,7 +427,7 @@ def trim(new_lines: List[str], string: str,
         new_lines[line_com] = sub_line + new_lines[line_com][col_com:]
 
 
-def com2ann_impl(d: Data, drop_none: bool, drop_ellipsis: bool) -> str:
+def com2ann_impl_old(d: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
     new_lines = d.lines[:]
     for line_com, line in enumerate(d.lines):
         match = re.search(TYPE_COM, line)
@@ -275,14 +525,15 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
     A summary of translated comments id printed by default.
     """
     try:
-        ast.parse(code)  # we want to work only with file without syntax errors
+        # We want to work only with file without syntax errors
+        tree = ast.parse(code, type_comment=True)
     except SyntaxError:
         return None
     lines = code.splitlines(keepends=True)
     rl = BytesIO(code.encode('utf-8')).readline
     tokens = list(tokenize.tokenize(rl))
 
-    data = Data(lines, tokens)
+    data = FileData(lines, tokens, tree)
     new_code = com2ann_impl(data, drop_none, drop_ellipsis)
 
     if not silent:
