@@ -2,7 +2,7 @@ sudo: false
 language: python
 python:
   - "3.8-dev"
-  dist: xenial
+dist: xenial
 
 install:
 - pip install -r test-requirements.txt
