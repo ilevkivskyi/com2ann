@@ -24,8 +24,40 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:.*$', flags=re.DOTALL)
 TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
 
 
+# TODO: use tokenizer for split_function_comment() and split_sub_comment().
+
 def split_function_comment(comment: str) -> Tuple[List[str], str]:
-    pass
+    # TODO: ()->int vs () -> int -- preserve spacing (maybe also # type:int vs # type: int)
+    # TODO: fail gracefully on invalid types.
+    typ = comment.split('#', maxsplit=1)[0].rstrip()
+    assert '->' in typ, 'Invalid function type'
+    arg_list, ret = typ.split('->')
+
+    arg_list = arg_list.strip()
+    ret = ret.strip()
+
+    assert arg_list[0] == '(' and arg_list[-1] == ')'
+    arg_list = arg_list[1:-1]
+
+    args: List[str] = []
+
+    next_arg = ''
+    nested = 0
+    for c in arg_list:
+        if c in '([{':
+            nested += 1
+        if c in ')]}':
+            nested -= 1
+        if c == ',' and not nested:
+            args.append(next_arg.strip())
+            next_arg = ''
+        else:
+            next_arg += c
+
+    if next_arg:
+        args.append(next_arg.strip())
+
+    return [a.lstrip('*') for a in args if a != '...'], ret
 
 
 @dataclass
@@ -47,7 +79,7 @@ class ArgComment:
     type_comment: str
     arg_line: int
     arg_end_offset: int
-    has_default: bool
+    has_default: bool = False
 
 
 @dataclass
@@ -87,7 +119,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 if a.type_comment:
                     args.append(ArgComment(a.type_comment,
                                            a.lineno, a.end_col_offset,
-                                           i < num_non_defs))
+                                           i >= num_non_defs))
             if fdef.args.vararg and fdef.args.vararg.type_comment:
                 args.append(ArgComment(fdef.args.vararg.type_comment,
                                        fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
@@ -97,7 +129,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 if a.type_comment:
                     args.append(ArgComment(a.type_comment,
                                            a.lineno, a.end_col_offset,
-                                           i < num_kw_non_defs))
+                                           i >= num_kw_non_defs))
             if fdef.args.kwarg and fdef.args.kwarg.type_comment:
                 args.append(ArgComment(fdef.args.kwarg.type_comment,
                                        fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
@@ -153,28 +185,74 @@ class TypeCommentCollector(ast.NodeVisitor):
         self.generic_visit(fdef)
 
 
-def process_assign(lines: List[str], comment: AssignComment, data: Data) -> None:
-    rvalue_line = lines[comment.rvalue_end_line - 1]
-
-    match = re.search(TYPE_COM, rvalue_line)
+def strip_type_comment(line: str) -> str:
+    match = re.search(TYPE_COM, line)
     assert match
-    matched = rvalue_line[match.start():]
+    matched = line[match.start():]
     matched = matched.lstrip()[1:]
 
-    rest = rvalue_line[:match.start()]
+    rest = line[:match.start()]
     sub_comment = re.search(TRAIL_OR_COM, matched)
     assert sub_comment
-    lines[comment.rvalue_end_line - 1] = rest + matched[sub_comment.start():]
+    if rest:
+        new_line = rest + matched[sub_comment.start():]
+    else:
+        # A type comment on line of its own.
+        new_line = line[:line.index('#')] + matched[sub_comment.start():].lstrip(' \t')
+    return new_line
+
+
+def process_assign(lines: List[str], comment: AssignComment, data: Data) -> None:
+    lines[comment.rvalue_end_line - 1] = strip_type_comment(lines[comment.rvalue_end_line - 1])
 
     lvalue_line = lines[comment.lvalue_end_line - 1]
+    # TODO: take care of Literal['#'].
     typ = comment.type_comment.split('#', maxsplit=1)[0].rstrip()
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
                                           ': ' + typ +
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
+def insert_arg_type(line: str, arg: ArgComment) -> str:
+    typ = arg.type_comment.split('#', maxsplit=1)[0].rstrip()
+
+    new_line = line[:arg.arg_end_offset] + ': ' + typ
+
+    rest = line[arg.arg_end_offset:]
+    if not arg.has_default:
+        return new_line + rest
+
+    # Here we are a bit opinionated about spacing (see PEP 8).
+    rest = rest.lstrip()
+    assert rest[0] == '=', (line, rest)
+    rest = rest[1:].lstrip()
+
+    return new_line + ' = ' + rest
+
+
 def process_func_def(lines: List[str], func_type: FunctionData, data: Data) -> None:
-    pass
+    removed = 0
+    for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
+        if re.search(TYPE_COM, lines[i]):
+            lines[i] = strip_type_comment(lines[i])
+            if not lines[i].strip():
+                removed += 1
+                del lines[i]
+
+    # Inserting return type is a bit dirty...
+    if func_type.ret_type:
+        ret_line = func_type.body_first_line - removed - 1
+        ret_line -= 1
+        while not lines[ret_line].split('#')[0].strip():
+            ret_line -= 1
+
+        # TODO: use also tokenizer here to take care of possible comment.
+        colon = lines[ret_line].rindex(':')
+        right_par = lines[ret_line][:colon].rindex(')')
+        lines[ret_line] = lines[ret_line][:right_par + 1] + ' -> ' + func_type.ret_type + lines[ret_line][colon:]
+
+    for arg in reversed(func_type.arg_types):
+        lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg)
 
 
 def com2ann_impl(code: str, drop_none: bool, drop_ellipsis: bool) -> Optional[Tuple[str, Data]]:
