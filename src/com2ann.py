@@ -24,7 +24,7 @@ from typing import List, DefaultDict, Tuple, Optional, Union
 __all__ = ['com2ann', 'TYPE_COM']
 
 TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
-TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
+_TRAILER = re.compile(r'\s*$', flags=re.DOTALL)
 
 
 @dataclass
@@ -196,30 +196,41 @@ class TypeCommentCollector(ast.NodeVisitor):
         return args
 
 
-# TODO: use tokenizer for split_function_comment() and split_sub_comment().
+def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
+    """Split extra comment from a type comment.
 
+    The only non-trivial thing here is to take care of literal types,
+    that can contain arbitrary chars, including '#'.
+    """
+    rl = BytesIO(comment.encode('utf-8')).readline
+    tokens = list(tokenize.tokenize(rl))
 
-def split_sub_comment(comment: str) -> str:
-    # TODO: take care of Literal['#'].
-    return comment.split('#', maxsplit=1)[0].rstrip()
+    i_sub = None
+    for i, tok in enumerate(tokens):
+        if tok.exact_type == tokenize.COMMENT:
+            _, i_sub = tokens[i - 1].end
+
+    if i_sub is not None:
+        return comment[:i_sub], comment[i_sub:]
+    return comment, None
 
 
 def split_function_comment(comment: str) -> Tuple[List[str], str]:
-    # TODO: ()->int vs () -> int -- preserve spacing (maybe also # type:int vs # type: int)
-    # TODO: fail gracefully on invalid types.
-
-    typ = split_sub_comment(comment)
+    typ, _ = split_sub_comment(comment)
     assert '->' in typ, 'Invalid function type'
+
+    # TODO: ()->int vs () -> int -- keep spacing (also # type:int vs # type: int).
     arg_list, ret = typ.split('->')
 
     arg_list = arg_list.strip()
     ret = ret.strip()
 
-    assert arg_list[0] == '(' and arg_list[-1] == ')'
+    assert arg_list[0] == '(' and arg_list[-1] == ')', 'Invalid function type'
     arg_list = arg_list[1:-1]
 
     args: List[str] = []
 
+    # TODO: use tokenizer to guard against Literal[','].
     next_arg = ''
     nested = 0
     for c in arg_list:
@@ -245,19 +256,19 @@ def strip_type_comment(line: str) -> str:
     if match.group(1).lstrip().startswith('ignore'):
         # Keep # type: ignore[=code] comments.
         return line
-    matched = line[match.start():]
-    matched = matched.lstrip()[1:]
-
     rest = line[:match.start()]
 
-    # TODO: take care of Literal['#'] also here.
-    sub_comment = re.search(TRAIL_OR_COM, matched)
-    assert sub_comment
+    typ = match.group(1)
+    _, sub_comment = split_sub_comment(typ)
+    if sub_comment is None:
+        trailer = re.search(_TRAILER, typ)
+        sub_comment = typ[trailer.start():]
+
     if rest:
-        new_line = rest + matched[sub_comment.start():]
+        new_line = rest + sub_comment
     else:
         # A type comment on line of its own.
-        new_line = line[:line.index('#')] + matched[sub_comment.start():].lstrip(' \t')
+        new_line = line[:line.index('#')] + sub_comment.lstrip(' \t')
     return new_line
 
 
@@ -295,14 +306,14 @@ def process_assign(comment: AssignData, data: FileData,
 
     lvalue_line = lines[comment.lvalue_end_line - 1]
 
-    typ = split_sub_comment(comment.type_comment)
+    typ, _ = split_sub_comment(comment.type_comment)
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
                                           ': ' + typ +
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
 def insert_arg_type(line: str, arg: ArgComment) -> str:
-    typ = split_sub_comment(arg.type_comment)
+    typ, _ = split_sub_comment(arg.type_comment)
 
     new_line = line[:arg.arg_end_offset] + ': ' + typ
 
@@ -312,7 +323,7 @@ def insert_arg_type(line: str, arg: ArgComment) -> str:
 
     # Here we are a bit opinionated about spacing (see PEP 8).
     rest = rest.lstrip()
-    assert rest[0] == '=', (line, rest, arg)
+    assert rest[0] == '='
     rest = rest[1:].lstrip()
 
     return new_line + ' = ' + rest

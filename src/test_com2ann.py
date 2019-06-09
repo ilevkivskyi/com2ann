@@ -161,6 +161,10 @@ class AssignTestCase(BaseTestCase):
                 42 == 5
             """)
 
+    def test_literal_types(self):
+        self.check("x = None  # type: Optional[Literal['#']]",
+                   "x: Optional[Literal['#']] = None")
+
 
 class FunctionTestCase(BaseTestCase):
     def test_single(self):
@@ -278,6 +282,22 @@ class FunctionTestCase(BaseTestCase):
                pass
             """
         )
+
+    def test_literal_type(self):
+        self.check(
+            """
+            def force_hash(
+                arg,  # type: Literal['#']
+            ):
+                # type: (...) -> Literal['#']
+                pass
+            """,
+            """
+            def force_hash(
+                arg: Literal['#'],
+            ) -> Literal['#']:
+                pass
+            """)
 
 
 class ForAndWithTestCase(BaseTestCase):
