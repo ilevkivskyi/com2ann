@@ -112,7 +112,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         if (fdef.type_comment or
                 any(a.type_comment for a in fdef.args.args) or
                 any(a.type_comment for a in fdef.args.kwonlyargs) or
-                fdef.args.vararg and fdef.vararg.type_comment or
+                fdef.args.vararg and fdef.args.vararg.type_comment or
                 fdef.args.kwarg and fdef.args.kwarg.type_comment):
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
             num_kw_non_defs = (len(fdef.args.kwonlyargs) -
@@ -572,7 +572,7 @@ if __name__ == '__main__':
     if os.path.isfile(args.infile):
         translate_file(args.infile, args.outfile,
                        args.drop_none, args.drop_ellipsis,
-                       args.silent, args.wrap.signatures)
+                       args.silent, args.wrap_signatures)
     else:
         for root, _, files in os.walk(args.infile):
             for file in files:
