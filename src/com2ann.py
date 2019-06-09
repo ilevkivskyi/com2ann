@@ -285,7 +285,8 @@ def process_assign(comment: AssignData, data: FileData,
             if comment.rvalue_end_line > comment.rvalue_start_line:
                 # Add a space to fix indentation after inserting paren.
                 for i in range(comment.rvalue_end_line, comment.rvalue_start_line, -1):
-                    lines[i - 1] = ' ' + lines[i - 1]
+                    if lines[i - 1].strip():
+                        lines[i - 1] = ' ' + lines[i - 1]
 
     elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
         # TODO: more tricky (multi-line) cases.
@@ -490,76 +491,6 @@ def trim(new_lines: List[str], string: str,
         if not sub_line.isspace():
             sub_line = sub_line.rstrip()
         new_lines[line_com] = sub_line + new_lines[line_com][col_com:]
-
-
-def com2ann_impl_old(d: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
-    new_lines = d.lines[:]
-    for line_com, line in enumerate(d.lines):
-        match = re.search(TYPE_COM, line)
-        if not match:
-            continue
-
-        # strip " #  type  :  annotation  \n" -> "annotation  \n"
-        typ = match.group().lstrip()[1:].lstrip()[4:].lstrip()[1:].lstrip()
-        sub_match = re.search(TRAIL_OR_COM, typ)
-        sub_comment = ''
-        if sub_match and sub_match.group():
-            sub_comment = sub_match.group()
-            typ = typ[:sub_match.start()]
-        if typ == 'ignore':
-            continue
-        col_com = match.start()
-        if not any(d.tokens[i].exact_type == tokenize.COMMENT
-                   for i in d.token_tab[line_com + 1]):
-            d.fail.append(line_com)
-            continue  # type comment inside string
-        line_start = find_start(d, line_com)
-        stmt_str = dedent(''.join(d.lines[line_start:line_com + 1]))
-        try:
-            stmt = ast.parse(stmt_str)
-        except SyntaxError:
-            d.fail.append(line_com)
-            continue  # for or with statements
-        if not check_target(stmt):
-            d.fail.append(line_com)
-            continue
-
-        d.success.append(line_com)
-        val = stmt.body[0].value
-
-        # writing output now
-        pos_eq = find_eq(d, line_start)
-        line_val, col_val = find_val(d, pos_eq)
-        line_target, col_target = find_target(d, pos_eq)
-
-        op_par = ''
-        cl_par = ''
-        if isinstance(val, ast.Tuple):
-            if d.lines[line_val][col_val] != '(':
-                op_par = '('
-                cl_par = ')'
-        # write the comment first
-        new_lines[line_com] = d.lines[line_com][:col_com].rstrip() + cl_par + sub_comment
-        col_com = len(d.lines[line_com][:col_com].rstrip())
-
-        string = False
-        if isinstance(val, ast.Tuple):
-            # t = 1, 2 -> t = (1, 2); only latter is allowed with annotation
-            free_place = int(new_lines[line_val][col_val - 2:col_val] == '  ')
-            new_lines[line_val] = (new_lines[line_val][:col_val - free_place] +
-                                   op_par + new_lines[line_val][col_val:])
-        elif isinstance(val, ast.Ellipsis) and drop_ellipsis:
-            string = '...'
-        elif (isinstance(val, ast.NameConstant) and
-              val.value is None and drop_none):
-            string = 'None'
-        if string:
-            trim(new_lines, string, line_target, pos_eq, line_com, col_com)
-
-        # finally write an annotation
-        new_lines[line_target] = (new_lines[line_target][:col_target] +
-                                  ': ' + typ + new_lines[line_target][col_target:])
-    return ''.join(new_lines)
 
 
 def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
