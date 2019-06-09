@@ -12,12 +12,10 @@ class BaseTestCase(unittest.TestCase):
     def check(self, code, expected, n=False, e=False):
         self.assertEqual(com2ann(dedent(code),
                          drop_none=n, drop_ellipsis=e, silent=True),
-                         dedent(expected))
+                         dedent(expected) if expected is not None else None)
 
 
-class SimpleTestCase(BaseTestCase):
-    # Tests for basic conversions
-
+class AssignTestCase(BaseTestCase):
     def test_basics(self):
         self.check("z = 5", "z = 5")
         self.check("z: int = 5", "z: int = 5")
@@ -72,7 +70,7 @@ class SimpleTestCase(BaseTestCase):
             self.assertFalse(re.search(TYPE_COM, line))
 
     def test_uneven_spacing(self):
-        self.check('x = 5 #type    : int # this one is OK',
+        self.check('x = 5   #type: int # this one is OK',
                    'x: int = 5 # this one is OK')
 
     def test_coding_kept(self):
@@ -115,30 +113,6 @@ class SimpleTestCase(BaseTestCase):
                    (1.0, \\
                     2.0, \\
                     3.0,)
-            """)
-
-    def test_with(self):
-        # TODO: support this.
-        self.check(
-            """
-            with foo(x==1) as f: #type: str
-                print(f)
-            """,
-            """
-            with foo(x==1) as f: #type: str
-                print(f)
-            """)
-
-    def test_for(self):
-        # TODO: support this.
-        self.check(
-            """
-            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
-                i + j
-            """,
-            """
-            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
-                i + j
             """)
 
     def test_complex_targets(self):
@@ -184,6 +158,146 @@ class SimpleTestCase(BaseTestCase):
             """
             (C.x[1]): bool = \\
                 42 == 5
+            """)
+
+
+class FunctionTestCase(BaseTestCase):
+    def test_single(self):
+        self.check(
+            """
+            def add(a, b):  # type: (int, int) -> int
+                '''# type: yes'''
+            """,
+            """
+            def add(a: int, b: int) -> int:
+                '''# type: yes'''
+            """)
+        self.check(
+            """
+            def add(a, b):  # type: (int, int) -> int  # type: ignore
+                pass
+            """,
+            """
+            def add(a: int, b: int) -> int:  # type: ignore
+                pass
+            """)
+
+    def test_complex_kinds(self):
+        self.check(
+            """
+            def embezzle(account, funds=MANY, *fake_receipts, stuff, other=None, **kwarg):
+                # type: (str, int, *str, Any, Optional[Any], Any) -> None  # note: vararg and kwarg
+                pass
+            """,
+            """
+            def embezzle(account: str, funds: int = MANY, *fake_receipts: str, stuff: Any, other: Optional[Any] = None, **kwarg: Any) -> None:
+                # note: vararg and kwarg
+                pass
+            """)
+        self.check(
+            """
+            def embezzle(account, funds=MANY, *fake_receipts, stuff, other=None, **kwarg):  # type: ignore
+                # type: (str, int, *str, Any, Optional[Any], Any) -> None
+                pass
+            """,
+            """
+            def embezzle(account: str, funds: int = MANY, *fake_receipts: str, stuff: Any, other: Optional[Any] = None, **kwarg: Any) -> None:  # type: ignore
+                pass
+            """)
+
+    def test_self_argument(self):
+        self.check(
+            """
+            def load_cache(self):
+                # type: () -> bool
+                pass
+            """,
+            """
+            def load_cache(self) -> bool:
+                pass
+            """)
+
+    def test_combined_annotations_single(self):
+        self.check(
+            """
+            def send_email(address, sender, cc, bcc, subject, body):
+                # type: (...) -> bool
+                pass
+            """,
+            """
+            def send_email(address, sender, cc, bcc, subject, body) -> bool:
+                pass
+            """)
+        self.check(
+            """
+            def send_email(address, sender, cc, bcc, subject, body):
+                # type: (...) -> BadType  # type: ignore
+                pass
+            """,
+            """
+            def send_email(address, sender, cc, bcc, subject, body) -> BadType:  # type: ignore
+                pass
+            """)
+        self.check(
+            """
+            def send_email(address, sender, cc, bcc, subject, body):  # type: ignore
+                # type: (...) -> bool
+                pass
+            """,
+            """
+            def send_email(address, sender, cc, bcc, subject, body) -> bool:  # type: ignore
+                pass
+            """)
+
+    def test_combined_annotations_multi(self):
+        self.check(
+            """
+            def send_email(address,     # type: Union[str, List[str]]
+               sender,      # type: str
+               cc,          # type: Optional[List[str]]  # this is OK
+               bcc,         # type: Optional[List[Bad]]  # type: ignore
+               subject='',
+               body=None    # type: List[str]
+               ):
+               # type: (...) -> bool
+               pass
+            """,
+            """
+            def send_email(address: Union[str, List[str]],
+               sender: str,
+               cc: Optional[List[str]],  # this is OK
+               bcc: Optional[List[Bad]],  # type: ignore
+               subject='',
+               body: List[str] = None
+               ) -> bool:
+               pass
+            """
+        )
+
+
+class ForAndWithTestCase(BaseTestCase):
+    def test_with(self):
+        # TODO: support this.
+        self.check(
+            """
+            with foo(x==1) as f: #type: str
+                print(f)
+            """,
+            """
+            with foo(x==1) as f: #type: str
+                print(f)
+            """)
+
+    def test_for(self):
+        # TODO: support this.
+        self.check(
+            """
+            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """,
+            """
+            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
             """)
 
 
