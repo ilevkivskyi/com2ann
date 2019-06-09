@@ -16,7 +16,6 @@ import argparse
 import tokenize
 from tokenize import TokenInfo
 from collections import defaultdict
-from textwrap import dedent
 from io import BytesIO
 from dataclasses import dataclass
 
@@ -365,27 +364,6 @@ def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool) -> str:
     return ''.join(data.lines)
 
 
-def skip_blank(d: FileData, line: int) -> int:
-    """Return first non-blank line number after `line`."""
-    while not d.lines[line].strip():
-        line += 1
-    return line
-
-
-def find_start(d: FileData, line_com: int) -> int:
-    """Find line where first char of the assignment target appears.
-
-    `line_com` is the line where type comment was found.
-    """
-    i = d.token_tab[line_com + 1][-2]  # index of type comment token in tokens list
-    # First climb back to end of previous statement.
-    while ((d.tokens[i].exact_type != tokenize.NEWLINE) and
-           (d.tokens[i].exact_type != tokenize.ENCODING)):
-        i -= 1
-    lno = d.tokens[i].start[0]
-    return skip_blank(d, lno)
-
-
 def check_target(assign: ast.Assign) -> bool:
     """Check if the statement is suitable for annotation.
 
@@ -402,95 +380,6 @@ def check_target(assign: ast.Assign) -> bool:
     ):
         return True
     return False
-
-
-def find_eq(d: FileData, line_start: int) -> Tuple[int, int]:
-    """Find equal sign position starting from `line_start`.
-
-    We need to be careful about not taking first assignment in d[f(x=1)] = 5.
-    """
-    col = pars = 0
-    line = line_start
-    while d.lines[line][col] != '=' or pars != 0:
-        ch = d.lines[line][col]
-        if ch in '([{':
-            pars += 1
-        elif ch in ')]}':
-            pars -= 1
-        # A comment or blank line in the middle of assignment statement -- skip it.
-        if ch == '#' or col == len(d.lines[line]) - 1:
-            line = skip_blank(d, line + 1)
-            col = 0
-        else:
-            col += 1
-    return line, col
-
-
-def find_val(d: FileData, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
-    """Find position of first character of the assignment r.h.s.
-
-    `pos_eq` is the position of equality sign in the assignment.
-    """
-    line, col = pos_eq
-    # Walk forward from equality sign.
-    while d.lines[line][col].isspace() or d.lines[line][col] in '=\\':
-        if col == len(d.lines[line]) - 1:
-            line += 1
-            col = 0
-        else:
-            col += 1
-    return line, col
-
-
-def find_target(d: FileData, pos_eq: Tuple[int, int]) -> Tuple[int, int]:
-    """Find position of last character of the target (annotation goes here)."""
-    line, col = pos_eq
-    # Walk backward from the equality sign.
-    while d.lines[line][col].isspace() or d.lines[line][col] in '=\\':
-        if col == 0:
-            line -= 1
-            col = len(d.lines[line]) - 1
-        else:
-            col -= 1
-    return line, col + 1
-
-
-def trim(new_lines: List[str], string: str,
-         line_target: int, pos_eq: Tuple[int, int],
-         line_com: int, col_com: int) -> None:
-    """Remove None or Ellipsis from assignment value.
-
-    Also remove parentheses if one has (None), (...) etc.
-    This modifies the `new_lines` in place.
-
-    Arguments:
-    * string: 'None' or '...'
-    * line_target: line where last char of target is located
-    * pos_eq: position of the equality sign
-    * line_com, col_com: position of the type comment
-    """
-    def no_pars(s: str) -> str:
-        return s.replace('(', '').replace(')', '')
-    line_eq, col_eq = pos_eq
-
-    sub_line = new_lines[line_eq][:col_eq]
-    if line_eq == line_target:
-        sub_line = sub_line.rstrip()
-        replacement = new_lines[line_eq][col_com:]
-    else:
-        replacement = new_lines[line_eq][col_eq + 1:]
-
-    new_lines[line_eq] = sub_line + replacement
-
-    # Strip all parentheses between equality sign an type comment.
-    for line in range(line_eq + 1, line_com):
-        new_lines[line] = no_pars(new_lines[line])
-
-    if line_com != line_eq:
-        sub_line = no_pars(new_lines[line_com][:col_com]).replace(string, '')
-        if not sub_line.isspace():
-            sub_line = sub_line.rstrip()
-        new_lines[line_com] = sub_line + new_lines[line_com][col_com:]
 
 
 def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
