@@ -314,6 +314,12 @@ def process_assign(comment: AssignData, data: FileData,
     lvalue_line = lines[comment.lvalue_end_line - 1]
 
     typ, _ = split_sub_comment(comment.type_comment)
+
+    # TODO: this is pretty ad hoc.
+    lv_line = lines[comment.lvalue_end_line - 1]
+    while comment.lvalue_end_offset < len(lv_line) and lv_line[comment.lvalue_end_offset] == ')':
+        comment.lvalue_end_offset += 1
+
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
                                           ': ' + typ +
                                           lvalue_line[comment.lvalue_end_offset:])
@@ -510,7 +516,8 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
 
 
 def translate_file(infile: str, outfile: str,
-                   drop_none: bool, drop_ellipsis: bool, silent: bool) -> None:
+                   drop_none: bool, drop_ellipsis: bool,
+                   silent: bool, wrap_sig: int) -> None:
     try:
         opened = tokenize.open(infile)
     except SyntaxError:
@@ -522,7 +529,8 @@ def translate_file(infile: str, outfile: str,
     if not silent:
         print('File:', infile)
     new_code = com2ann(code, drop_none=drop_none,
-                       drop_ellipsis=drop_ellipsis, silent=silent)
+                       drop_ellipsis=drop_ellipsis,
+                       silent=silent, wrap_sig=wrap_sig)
     if new_code is None:
         print("SyntaxError in", infile)
         return
@@ -553,13 +561,18 @@ if __name__ == '__main__':
                         help="drop any Ellipsis (...) as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+    parser.add_argument("-w", "--wrap-signatures",
+                        help="Wrap function headers that are longer than given length",
+                        type=int, default=0)
+
     args = parser.parse_args()
     if args.outfile is None:
         args.outfile = args.infile
 
     if os.path.isfile(args.infile):
         translate_file(args.infile, args.outfile,
-                       args.drop_none, args.drop_ellipsis, args.silent)
+                       args.drop_none, args.drop_ellipsis,
+                       args.silent, args.wrap.signatures)
     else:
         for root, _, files in os.walk(args.infile):
             for file in files:
@@ -568,4 +581,4 @@ if __name__ == '__main__':
                     file_name = os.path.join(root, file)
                     translate_file(file_name, file_name,
                                    args.drop_none, args.drop_ellipsis,
-                                   args.silent)
+                                   args.silent, args.wrap_signatures)
