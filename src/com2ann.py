@@ -12,7 +12,6 @@ some formatting modifications, if the original formatting was too tricky.
 import re
 import os
 import ast
-from ast import Module
 import argparse
 import tokenize
 from tokenize import TokenInfo
@@ -25,7 +24,7 @@ from typing import List, DefaultDict, Tuple, Optional, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
-TYPE_COM = re.compile(r'\s*#\s*type\s*:.*$', flags=re.DOTALL)
+TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
 TRAIL_OR_COM = re.compile(r'\s*$|\s*#.*$', flags=re.DOTALL)
 
 
@@ -94,7 +93,8 @@ class TypeCommentCollector(ast.NodeVisitor):
 
     def visit_Assign(self, s: ast.Assign) -> None:
         if s.type_comment:
-            # TODO: what if more targets?
+            if not check_target(s):
+                return
             target = s.targets[0]
             tuple_rvalue = isinstance(s.value, ast.Tuple)
             none_rvalue = isinstance(s.value, ast.Constant) and s.value.value is None
@@ -115,31 +115,10 @@ class TypeCommentCollector(ast.NodeVisitor):
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
             num_kw_non_defs = len(fdef.args.kwonlyargs) - len([d for d in fdef.args.kw_defaults if d is not None])
 
-            args: List[ArgComment] = []
-
-            for i, a in enumerate(fdef.args.args):
-                if a.type_comment:
-                    args.append(ArgComment(a.type_comment,
-                                           a.lineno, a.end_col_offset,
-                                           i >= num_non_defs))
-            if fdef.args.vararg and fdef.args.vararg.type_comment:
-                args.append(ArgComment(fdef.args.vararg.type_comment,
-                                       fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
-                                       False))
-
-            for i, a in enumerate(fdef.args.kwonlyargs):
-                if a.type_comment:
-                    args.append(ArgComment(a.type_comment,
-                                           a.lineno, a.end_col_offset,
-                                           i >= num_kw_non_defs))
-            if fdef.args.kwarg and fdef.args.kwarg.type_comment:
-                args.append(ArgComment(fdef.args.kwarg.type_comment,
-                                       fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
-                                       False))
+            args = self.process_per_arg_comments(fdef, num_non_defs, num_kw_non_defs)
 
             if fdef.type_comment:
                 f_args, ret = split_function_comment(fdef.type_comment)
-
             else:
                 f_args = [], ret = None
 
@@ -152,42 +131,74 @@ class TypeCommentCollector(ast.NodeVisitor):
             elif not f_args:
                 self.found.append(FunctionData([], ret, fdef.lineno, fdef.body[0].lineno))
             else:
-                tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
-                if fdef.args.vararg:
-                    tot_args += 1
-                if fdef.args.kwarg:
-                    tot_args += 1
-
-                if len(f_args) not in (tot_args, tot_args - 1):
-                    # TODO: handle gracefully.
-                    raise Exception('Bad')
-
-                if len(f_args) == tot_args - 1:
-                    iter_args = fdef.args.args[1:]
-                else:
-                    iter_args = fdef.args.args
-
-                if fdef.args.vararg:
-                    iter_args.append(fdef.args.vararg)
-                iter_args.extend(fdef.args.kwonlyargs)
-                if fdef.args.kwarg:
-                    iter_args.append(fdef.args.kwarg)
-
-                for typ, a in zip(f_args, iter_args):
-                    has_default = False
-                    if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
-                        has_default = True
-                    if a in fdef.args.kwonlyargs and fdef.args.kwonlyargs.index(a) >= num_kw_non_defs:
-                        has_default = True
-                    args.append(ArgComment(typ,
-                                           a.lineno, a.end_col_offset,
-                                           has_default))
-
+                args = self.process_function_comment(fdef, f_args, num_non_defs, num_kw_non_defs)
                 self.found.append(FunctionData(args, ret, fdef.lineno, fdef.body[0].lineno))
         self.generic_visit(fdef)
 
+    def process_per_arg_comments(self, fdef: ast.FunctionDef,
+                                 num_non_defs: int, num_kw_non_defs: int) -> List[ArgComment]:
+        args: List[ArgComment] = []
+
+        for i, a in enumerate(fdef.args.args):
+            if a.type_comment:
+                args.append(ArgComment(a.type_comment,
+                                       a.lineno, a.end_col_offset,
+                                       i >= num_non_defs))
+        if fdef.args.vararg and fdef.args.vararg.type_comment:
+            args.append(ArgComment(fdef.args.vararg.type_comment,
+                                   fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
+                                   False))
+
+        for i, a in enumerate(fdef.args.kwonlyargs):
+            if a.type_comment:
+                args.append(ArgComment(a.type_comment,
+                                       a.lineno, a.end_col_offset,
+                                       i >= num_kw_non_defs))
+        if fdef.args.kwarg and fdef.args.kwarg.type_comment:
+            args.append(ArgComment(fdef.args.kwarg.type_comment,
+                                   fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
+                                   False))
+        return args
+
+    def process_function_comment(self, fdef: ast.FunctionDef, f_args: List[str],
+                                 num_non_defs: int, num_kw_non_defs: int) -> List[ArgComment]:
+        args: List[ArgComment] = []
+
+        tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
+        if fdef.args.vararg:
+            tot_args += 1
+        if fdef.args.kwarg:
+            tot_args += 1
+
+        if len(f_args) not in (tot_args, tot_args - 1):
+            # TODO: handle gracefully.
+            raise Exception('Bad')
+
+        if len(f_args) == tot_args - 1:
+            iter_args = fdef.args.args[1:]
+        else:
+            iter_args = fdef.args.args.copy()
+
+        if fdef.args.vararg:
+            iter_args.append(fdef.args.vararg)
+        iter_args.extend(fdef.args.kwonlyargs)
+        if fdef.args.kwarg:
+            iter_args.append(fdef.args.kwarg)
+
+        for typ, a in zip(f_args, iter_args):
+            has_default = False
+            if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
+                has_default = True
+            if a in fdef.args.kwonlyargs and fdef.args.kwonlyargs.index(a) >= num_kw_non_defs:
+                has_default = True
+            args.append(ArgComment(typ,
+                                   a.lineno, a.end_col_offset,
+                                   has_default))
+        return args
+
 
 # TODO: use tokenizer for split_function_comment() and split_sub_comment().
+
 
 def split_sub_comment(comment: str) -> str:
     # TODO: take care of Literal['#'].
@@ -230,9 +241,11 @@ def split_function_comment(comment: str) -> Tuple[List[str], str]:
 
 
 def strip_type_comment(line: str) -> str:
-    # TODO: keep # type: ignore!
     match = re.search(TYPE_COM, line)
     assert match
+    if match.group(1).lstrip().startswith('ignore'):
+        # Keep # type: ignore[=code] comments.
+        return line
     matched = line[match.start():]
     matched = matched.lstrip()[1:]
 
@@ -291,7 +304,7 @@ def insert_arg_type(line: str, arg: ArgComment) -> str:
 
     # Here we are a bit opinionated about spacing (see PEP 8).
     rest = rest.lstrip()
-    assert rest[0] == '=', (line, rest)
+    assert rest[0] == '=', (line, rest, arg)
     rest = rest[1:].lstrip()
 
     return new_line + ' = ' + rest
@@ -360,17 +373,13 @@ def find_start(d: FileData, line_com: int) -> int:
     return skip_blank(d, lno)
 
 
-def check_target(stmt: Module) -> bool:
+def check_target(assign: ast.Assign) -> bool:
     """Check if the statement is suitable for annotation.
 
     Type comments can placed on with and for statements, but
     annotation can be placed only on an simple assignment with a single target.
     """
-    if len(stmt.body):
-        assign = stmt.body[0]
-    else:
-        return False
-    if isinstance(assign, ast.Assign) and len(assign.targets) == 1:
+    if len(assign.targets) == 1:
         target = assign.targets[0]
     else:
         return False

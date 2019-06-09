@@ -3,7 +3,6 @@
 import unittest
 from com2ann import com2ann, TYPE_COM
 import re
-import sys
 from textwrap import dedent
 
 
@@ -24,10 +23,12 @@ class AssignTestCase(BaseTestCase):
                    "z: int = 5 # comment")
 
     def test_type_ignore(self):
-        self.check("foobar = foo_baz() #type: ignore",
-                   "foobar = foo_baz() #type: ignore")
+        self.check("foobar = foo_baz() # type: ignore",
+                   "foobar = foo_baz() # type: ignore")
         self.check("a = 42 #type: ignore #comment",
                    "a = 42 #type: ignore #comment")
+        self.check("foobar = None  # type: int  # type: ignore",
+                   "foobar: int  # type: ignore", True, False)
 
     def test_complete_tuple(self):
         self.check("t = 1, 2, 3 # type: Tuple[int, ...]",
@@ -228,6 +229,7 @@ class FunctionTestCase(BaseTestCase):
             def send_email(address, sender, cc, bcc, subject, body) -> bool:
                 pass
             """)
+        # TODO: should we move an ignore on its own line somewhere else?
         self.check(
             """
             def send_email(address, sender, cc, bcc, subject, body):
@@ -235,7 +237,8 @@ class FunctionTestCase(BaseTestCase):
                 pass
             """,
             """
-            def send_email(address, sender, cc, bcc, subject, body) -> BadType:  # type: ignore
+            def send_email(address, sender, cc, bcc, subject, body) -> BadType:
+                # type: ignore
                 pass
             """)
         self.check(
@@ -257,7 +260,8 @@ class FunctionTestCase(BaseTestCase):
                cc,          # type: Optional[List[str]]  # this is OK
                bcc,         # type: Optional[List[Bad]]  # type: ignore
                subject='',
-               body=None    # type: List[str]
+               body=None,   # type: List[str]
+               *args        # type: ignore
                ):
                # type: (...) -> bool
                pass
@@ -268,7 +272,8 @@ class FunctionTestCase(BaseTestCase):
                cc: Optional[List[str]],  # this is OK
                bcc: Optional[List[Bad]],  # type: ignore
                subject='',
-               body: List[str] = None
+               body: List[str] = None,
+               *args        # type: ignore
                ) -> bool:
                pass
             """
