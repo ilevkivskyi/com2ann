@@ -1,16 +1,13 @@
 sudo: false
 language: python
 python:
-  - "nightly"
-  - "3.7-dev"
-  - "3.6"
-  - "3.5"
-  - "3.4"
+  - "3.8-dev"
+dist: xenial
 
 install:
 - pip install -r test-requirements.txt
 
 script:
-  - export PYTHONPATH="src"; py.test $PYTHONPATH
+  - export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
   - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then flake8 --config=.flake8 src/com2ann.py; fi
   - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then flake8 --config=.flake8-tests src/test_com2ann.py; fi
