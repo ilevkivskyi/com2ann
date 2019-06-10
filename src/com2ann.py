@@ -35,6 +35,15 @@ Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 
 @dataclass
+class Options:
+    drop_none: bool
+    drop_ellipsis: bool
+    silent: bool
+    wrap_signatures: int = 0
+    python_minor_version: int = -1
+
+
+@dataclass
 class AssignData:
     type_comment: str
 
@@ -545,8 +554,12 @@ def check_target(assign: ast.Assign) -> bool:
     return False
 
 
-def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
-            silent: bool = False, wrap_sig: int = 0) -> Optional[Tuple[str, FileData]]:
+def com2ann(code: str, *,
+            drop_none: bool = False,
+            drop_ellipsis: bool = False,
+            silent: bool = False,
+            wrap_sig: int = 0,
+            python_minor_version: int = -1) -> Optional[Tuple[str, FileData]]:
     """Translate type comments to type annotations in code.
 
     Take code as string and return this string where::
@@ -574,7 +587,9 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
     """
     try:
         # We want to work only with file without syntax errors
-        tree = ast.parse(code, type_comments=True)
+        tree = ast.parse(code,
+                         type_comments=True,
+                         feature_version=python_minor_version)
     except SyntaxError:
         return None
     lines = code.splitlines(keepends=True)
@@ -597,9 +612,7 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
     return new_code, data
 
 
-def translate_file(infile: str, outfile: str,
-                   drop_none: bool, drop_ellipsis: bool,
-                   silent: bool, wrap_sig: int) -> None:
+def translate_file(infile: str, outfile: str, options: Options) -> None:
     try:
         opened = tokenize.open(infile)
     except SyntaxError:
@@ -608,11 +621,14 @@ def translate_file(infile: str, outfile: str,
     with opened as f:
         code = f.read()
         enc = f.encoding
-    if not silent:
+    if not options.silent:
         print('File:', infile)
-    result = com2ann(code, drop_none=drop_none,
-                     drop_ellipsis=drop_ellipsis,
-                     silent=silent, wrap_sig=wrap_sig)
+    result = com2ann(code,
+                     drop_none=options.drop_none,
+                     drop_ellipsis=options.drop_ellipsis,
+                     silent=options.silent,
+                     wrap_sig=options.wrap_signatures,
+                     python_minor_version=options.python_minor_version)
     if result is None:
         print("SyntaxError in", infile, file=sys.stderr)
         return
@@ -647,21 +663,24 @@ if __name__ == '__main__':
     parser.add_argument("-w", "--wrap-signatures",
                         help="Wrap function headers that are longer than given length",
                         type=int, default=0)
+    parser.add_argument("-v", "--python-minor-version",
+                        help="Python 3 minor version to use to parse the files",
+                        type=int, default=-1)
 
     args = parser.parse_args()
     if args.outfile is None:
         args.outfile = args.infile
 
+    options = Options(args.drop_none, args.drop_ellipsis,
+                      args.silent, args.wrap_signatures,
+                      args.python_minor_version)
+
     if os.path.isfile(args.infile):
-        translate_file(args.infile, args.outfile,
-                       args.drop_none, args.drop_ellipsis,
-                       args.silent, args.wrap_signatures)
+        translate_file(args.infile, args.outfile, options)
     else:
         for root, _, files in os.walk(args.infile):
             for file in files:
                 _, ext = os.path.splitext(file)
                 if ext == '.py' or ext == '.pyi':
                     file_name = os.path.join(root, file)
-                    translate_file(file_name, file_name,
-                                   args.drop_none, args.drop_ellipsis,
-                                   args.silent, args.wrap_signatures)
+                    translate_file(file_name, file_name, options)
