@@ -160,7 +160,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         if fdef.args.vararg and fdef.args.vararg.type_comment:
             vararg = fdef.args.vararg
             assert vararg.end_col_offset
-            args.append(ArgComment(vararg.type_comment,
+            args.append(ArgComment(fdef.args.vararg.type_comment,
                                    vararg.lineno, vararg.end_col_offset,
                                    False))
 
@@ -173,7 +173,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         if fdef.args.kwarg and fdef.args.kwarg.type_comment:
             kwarg = fdef.args.kwarg
             assert kwarg.end_col_offset
-            args.append(ArgComment(kwarg.type_comment,
+            args.append(ArgComment(fdef.args.kwarg.type_comment,
                                    kwarg.lineno, kwarg.end_col_offset,
                                    False))
         return args
