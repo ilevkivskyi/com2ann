@@ -2,6 +2,7 @@ com2ann
 =======
 
 [![Build Status](https://travis-ci.org/ilevkivskyi/com2ann.svg)](https://travis-ci.org/ilevkivskyi/com2ann)
+[![Checked with mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
 
 Tool for translation type comments to type annotations in Python.
 

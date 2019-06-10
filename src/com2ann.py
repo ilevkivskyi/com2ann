@@ -98,13 +98,18 @@ class TypeCommentCollector(ast.NodeVisitor):
             if not check_target(s):
                 return
             target = s.targets[0]
-            tuple_rvalue = isinstance(s.value, ast.Tuple)
-            none_rvalue = isinstance(s.value, ast.Constant) and s.value.value is None
-            ellipsis_rvalue = isinstance(s.value, ast.Constant) and s.value.value is Ellipsis
+            value = s.value
+
+            tuple_rvalue = isinstance(value, ast.Tuple)
+            none_rvalue = isinstance(value, ast.Constant) and value.value is None
+            ellipsis_rvalue = isinstance(value, ast.Constant) and value.value is Ellipsis
+
+            assert (target.end_lineno and target.end_col_offset and
+                    value.end_lineno and value.end_col_offset)
             found = AssignData(s.type_comment,
                                target.end_lineno, target.end_col_offset,
-                               s.value.lineno, s.value.col_offset,
-                               s.value.end_lineno, s.value.end_col_offset,
+                               value.lineno, value.col_offset,
+                               value.end_lineno, value.end_col_offset,
                                tuple_rvalue, none_rvalue, ellipsis_rvalue)
             self.found.append(found)
 
@@ -120,51 +125,62 @@ class TypeCommentCollector(ast.NodeVisitor):
 
             args = self.process_per_arg_comments(fdef, num_non_defs, num_kw_non_defs)
 
+            ret: Optional[str]
             if fdef.type_comment:
                 f_args, ret = split_function_comment(fdef.type_comment)
             else:
-                f_args = [], ret = None
+                f_args, ret = [], None
 
             if args and f_args:
                 # TODO: handle gracefully.
                 raise Exception('Bad')
 
+            body_start = fdef.body[0].lineno
             if args:
-                self.found.append(FunctionData(args, ret, fdef.lineno, fdef.body[0].lineno))
+                self.found.append(FunctionData(args, ret, fdef.lineno, body_start))
             elif not f_args:
-                self.found.append(FunctionData([], ret, fdef.lineno, fdef.body[0].lineno))
+                self.found.append(FunctionData([], ret, fdef.lineno, body_start))
             else:
-                args = self.process_function_comment(fdef, f_args, num_non_defs, num_kw_non_defs)
-                self.found.append(FunctionData(args, ret, fdef.lineno, fdef.body[0].lineno))
+                args = self.process_function_comment(fdef, f_args,
+                                                     num_non_defs, num_kw_non_defs)
+                self.found.append(FunctionData(args, ret, fdef.lineno, body_start))
         self.generic_visit(fdef)
 
     def process_per_arg_comments(self, fdef: ast.FunctionDef,
-                                 num_non_defs: int, num_kw_non_defs: int) -> List[ArgComment]:
+                                 num_non_defs: int, num_kw_non_defs: int
+                                 ) -> List[ArgComment]:
         args: List[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
             if a.type_comment:
+                assert a.end_col_offset
                 args.append(ArgComment(a.type_comment,
                                        a.lineno, a.end_col_offset,
                                        i >= num_non_defs))
         if fdef.args.vararg and fdef.args.vararg.type_comment:
+            vararg = fdef.args.vararg
+            assert vararg.end_col_offset
             args.append(ArgComment(fdef.args.vararg.type_comment,
-                                   fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
+                                   vararg.lineno, vararg.end_col_offset,
                                    False))
 
         for i, a in enumerate(fdef.args.kwonlyargs):
             if a.type_comment:
+                assert a.end_col_offset
                 args.append(ArgComment(a.type_comment,
                                        a.lineno, a.end_col_offset,
                                        i >= num_kw_non_defs))
         if fdef.args.kwarg and fdef.args.kwarg.type_comment:
+            kwarg = fdef.args.kwarg
+            assert kwarg.end_col_offset
             args.append(ArgComment(fdef.args.kwarg.type_comment,
-                                   fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
+                                   kwarg.lineno, kwarg.end_col_offset,
                                    False))
         return args
 
     def process_function_comment(self, fdef: ast.FunctionDef, f_args: List[str],
-                                 num_non_defs: int, num_kw_non_defs: int) -> List[ArgComment]:
+                                 num_non_defs: int, num_kw_non_defs: int
+                                 ) -> List[ArgComment]:
         args: List[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
@@ -192,8 +208,12 @@ class TypeCommentCollector(ast.NodeVisitor):
             has_default = False
             if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
                 has_default = True
-            if a in fdef.args.kwonlyargs and fdef.args.kwonlyargs.index(a) >= num_kw_non_defs:
+
+            kwonlyargs = fdef.args.kwonlyargs
+            if a in kwonlyargs and kwonlyargs.index(a) >= num_kw_non_defs:
                 has_default = True
+
+            assert a.end_col_offset
             args.append(ArgComment(typ,
                                    a.lineno, a.end_col_offset,
                                    has_default))
@@ -256,7 +276,7 @@ def split_function_comment(comment: str) -> Tuple[List[str], str]:
 
 def strip_type_comment(line: str) -> str:
     match = re.search(TYPE_COM, line)
-    assert match
+    assert match, line
     if match.group(1).lstrip().startswith('ignore'):
         # Keep # type: ignore[=code] comments.
         return line
@@ -266,6 +286,7 @@ def strip_type_comment(line: str) -> str:
     _, sub_comment = split_sub_comment(typ)
     if sub_comment is None:
         trailer = re.search(_TRAILER, typ)
+        assert trailer
         sub_comment = typ[trailer.start():]
 
     if rest:
@@ -283,20 +304,23 @@ def string_insert(line: str, extra: str, pos: int) -> str:
 def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
     lines = data.lines
-    lines[comment.rvalue_end_line - 1] = strip_type_comment(lines[comment.rvalue_end_line - 1])
+
+    rv_end = comment.rvalue_end_line - 1
+    rv_start = comment.rvalue_start_line - 1
+    lines[rv_end] = strip_type_comment(lines[rv_end])
 
     if comment.tuple_rvalue:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
-        if not (lines[comment.rvalue_start_line - 1][comment.rvalue_start_offset] == '(' and
-                lines[comment.rvalue_end_line - 1][comment.rvalue_end_offset - 1] == ')'):
+        if not (lines[rv_start][comment.rvalue_start_offset] == '(' and
+                lines[rv_end][comment.rvalue_end_offset - 1] == ')'):
             # We need to wrap rvalue in parentheses before Python 3.8.
-            end_line = lines[comment.rvalue_end_line - 1]
-            lines[comment.rvalue_end_line - 1] = string_insert(end_line, ')',
-                                                               comment.rvalue_end_offset)
+            end_line = lines[rv_end]
+            lines[rv_end] = string_insert(end_line, ')',
+                                          comment.rvalue_end_offset)
 
-            start_line = lines[comment.rvalue_start_line - 1]
-            lines[comment.rvalue_start_line - 1] = string_insert(start_line, '(',
-                                                                 comment.rvalue_start_offset)
+            start_line = lines[rv_start]
+            lines[rv_start] = string_insert(start_line, '(',
+                                            comment.rvalue_start_offset)
 
             if comment.rvalue_end_line > comment.rvalue_start_line:
                 # Add a space to fix indentation after inserting paren.
@@ -317,7 +341,8 @@ def process_assign(comment: AssignData, data: FileData,
 
     # TODO: this is pretty ad hoc.
     lv_line = lines[comment.lvalue_end_line - 1]
-    while comment.lvalue_end_offset < len(lv_line) and lv_line[comment.lvalue_end_offset] == ')':
+    while (comment.lvalue_end_offset < len(lv_line) and
+           lv_line[comment.lvalue_end_offset] == ')'):
         comment.lvalue_end_offset += 1
 
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
@@ -369,6 +394,7 @@ def wrap_function_header(header: str) -> List[str]:
         return parts
 
     # Indent all the wrapped lines.
+    assert indent is not None
     parts = [parts[0]] + [' ' * indent + p.lstrip(' \t') for p in parts[1:]]
 
     # Add end lines like in the original header.
@@ -534,8 +560,8 @@ def translate_file(infile: str, outfile: str,
     if new_code is None:
         print("SyntaxError in", infile)
         return
-    with open(outfile, 'wb') as f:
-        f.write(new_code.encode(enc))
+    with open(outfile, 'wb') as fo:
+        fo.write(new_code.encode(enc))
 
 
 if __name__ == '__main__':
