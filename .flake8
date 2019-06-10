@@ -2,6 +2,7 @@
 max-line-length = 90
 ignore =
   B3,
-  DW12
+  DW12,
+  W504
 exclude =
   src/test_com2ann.py
