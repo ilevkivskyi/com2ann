@@ -12,6 +12,7 @@ some formatting modifications, if the original formatting was too tricky.
 import re
 import os
 import ast
+import sys
 import argparse
 import tokenize
 from tokenize import TokenInfo
@@ -28,6 +29,9 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
 # For internal use only.
 _TRAILER = re.compile(r'\s*$', flags=re.DOTALL)
 _NICE_IGNORE = re.compile(r'\s*# type: ignore\s*$', flags=re.DOTALL)
+
+Unsupported = Union[ast.For, ast.AsyncFor, ast.With, ast.AsyncWith]
+Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 
 @dataclass
@@ -92,10 +96,12 @@ class TypeCommentCollector(ast.NodeVisitor):
     def __init__(self) -> None:
         super().__init__()
         self.found: List[Union[AssignData, FunctionData]] = []
+        self.found_unsupported: List[int] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
         if s.type_comment:
             if not check_target(s):
+                self.found_unsupported.append(s.lineno)
                 return
             target = s.targets[0]
             value = s.value
@@ -113,7 +119,29 @@ class TypeCommentCollector(ast.NodeVisitor):
                                tuple_rvalue, none_rvalue, ellipsis_rvalue)
             self.found.append(found)
 
+    def visit_For(self, o: ast.For) -> None:
+        self.visit_unsupported(o)
+
+    def visit_AsyncFor(self, o: ast.AsyncFor) -> None:
+        self.visit_unsupported(o)
+
+    def visit_With(self, o: ast.With) -> None:
+        self.visit_unsupported(o)
+
+    def visit_AsyncWith(self, o: ast.AsyncWith) -> None:
+        self.visit_unsupported(o)
+
+    def visit_unsupported(self, o: Unsupported) -> None:
+        if o.type_comment:
+            self.found_unsupported.append(o.lineno)
+
     def visit_FunctionDef(self, fdef: ast.FunctionDef) -> None:
+        self.visit_function_impl(fdef)
+
+    def visit_AsyncFunctionDef(self, fdef: ast.AsyncFunctionDef) -> None:
+        self.visit_function_impl(fdef)
+
+    def visit_function_impl(self, fdef: Function) -> None:
         if (fdef.type_comment or
                 any(a.type_comment for a in fdef.args.args) or
                 any(a.type_comment for a in fdef.args.kwonlyargs) or
@@ -127,13 +155,19 @@ class TypeCommentCollector(ast.NodeVisitor):
 
             ret: Optional[str]
             if fdef.type_comment:
-                f_args, ret = split_function_comment(fdef.type_comment)
+                res = split_function_comment(fdef.type_comment)
+                if not res:
+                    self.found_unsupported.append(fdef.lineno)
+                    return
+                f_args, ret = res
             else:
                 f_args, ret = [], None
 
             if args and f_args:
-                # TODO: handle gracefully.
-                raise Exception('Bad')
+                print(f'Both per-argument and function comments for "{fdef.name}"',
+                      file=sys.stderr)
+                self.found_unsupported.append(fdef.lineno)
+                return
 
             body_start = fdef.body[0].lineno
             if args:
@@ -143,12 +177,15 @@ class TypeCommentCollector(ast.NodeVisitor):
             else:
                 args = self.process_function_comment(fdef, f_args,
                                                      num_non_defs, num_kw_non_defs)
+                if args is None:
+                    # There was an error.
+                    return
                 self.found.append(FunctionData(args, ret, fdef.lineno, body_start))
         self.generic_visit(fdef)
 
-    def process_per_arg_comments(self, fdef: ast.FunctionDef,
-                                 num_non_defs: int, num_kw_non_defs: int
-                                 ) -> List[ArgComment]:
+    def process_per_arg_comments(self, fdef: Function,
+                                 num_non_defs: int,
+                                 num_kw_non_defs: int) -> List[ArgComment]:
         args: List[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
@@ -178,9 +215,10 @@ class TypeCommentCollector(ast.NodeVisitor):
                                    False))
         return args
 
-    def process_function_comment(self, fdef: ast.FunctionDef, f_args: List[str],
-                                 num_non_defs: int, num_kw_non_defs: int
-                                 ) -> List[ArgComment]:
+    def process_function_comment(self, fdef: Function,
+                                 f_args: List[str],
+                                 num_non_defs: int,
+                                 num_kw_non_defs: int) -> Optional[List[ArgComment]]:
         args: List[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
@@ -190,8 +228,10 @@ class TypeCommentCollector(ast.NodeVisitor):
             tot_args += 1
 
         if len(f_args) not in (tot_args, tot_args - 1):
-            # TODO: handle gracefully.
-            raise Exception('Bad')
+            print(f'Invalid number of arguments in function comment for "{fdef.name}"',
+                  file=sys.stderr)
+            self.found_unsupported.append(fdef.lineno)
+            return None
 
         if len(f_args) == tot_args - 1:
             iter_args = fdef.args.args[1:]
@@ -239,9 +279,12 @@ def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
     return comment, None
 
 
-def split_function_comment(comment: str) -> Tuple[List[str], str]:
+def split_function_comment(comment: str) -> Optional[Tuple[List[str], str]]:
     typ, _ = split_sub_comment(comment)
-    assert '->' in typ, 'Invalid function type'
+    if '->' not in typ:
+        print('Invalid function type comment:', comment,
+              file=sys.stderr)
+        return None
 
     # TODO: ()->int vs () -> int -- keep spacing (also # type:int vs # type: int).
     arg_list, ret = typ.split('->')
@@ -249,7 +292,11 @@ def split_function_comment(comment: str) -> Tuple[List[str], str]:
     arg_list = arg_list.strip()
     ret = ret.strip()
 
-    assert arg_list[0] == '(' and arg_list[-1] == ')', 'Invalid function type'
+    if not(arg_list[0] == '(' and arg_list[-1] == ')'):
+        print('Invalid function type comment:', comment,
+              file=sys.stderr)
+        return None
+
     arg_list = arg_list[1:-1]
 
     args: List[str] = []
@@ -530,10 +577,10 @@ def com2ann(code: str, *, drop_none: bool = False, drop_ellipsis: bool = False,
 
     if not silent:
         if data.success:
-            print('Comments translated on lines:',
+            print('Comments translated for statements on lines:',
                   ', '.join(str(lno + 1) for lno in data.success))
         if data.fail:
-            print('Comments rejected on lines:',
+            print('Comments skipped for statements on lines:',
                   ', '.join(str(lno + 1) for lno in data.fail))
         if not data.success and not data.fail:
             print('No type comments found')
@@ -547,7 +594,7 @@ def translate_file(infile: str, outfile: str,
     try:
         opened = tokenize.open(infile)
     except SyntaxError:
-        print("Cannot open", infile)
+        print("Cannot open", infile, file=sys.stderr)
         return
     with opened as f:
         code = f.read()
@@ -558,7 +605,7 @@ def translate_file(infile: str, outfile: str,
                        drop_ellipsis=drop_ellipsis,
                        silent=silent, wrap_sig=wrap_sig)
     if new_code is None:
-        print("SyntaxError in", infile)
+        print("SyntaxError in", infile, file=sys.stderr)
         return
     with open(outfile, 'wb') as fo:
         fo.write(new_code.encode(enc))
