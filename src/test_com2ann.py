@@ -4,16 +4,21 @@ import unittest
 from com2ann import com2ann, TYPE_COM
 import re
 from textwrap import dedent
-from typing import Optional
+from typing import Optional, List
 
 
 class BaseTestCase(unittest.TestCase):
 
     def check(self, code: str, expected: Optional[str],
               n: bool = False, e: bool = False, w: int = 0) -> None:
-        self.assertEqual(com2ann(dedent(code),
-                         drop_none=n, drop_ellipsis=e, silent=True, wrap_sig=w),
-                         dedent(expected) if expected is not None else None)
+        result = com2ann(dedent(code),
+                         drop_none=n, drop_ellipsis=e, silent=True, wrap_sig=w)
+        if expected is None:
+            self.assertIs(result, None)
+        else:
+            assert result is not None
+            new_code, _ = result
+            self.assertEqual(new_code, dedent(expected))
 
 
 class AssignTestCase(BaseTestCase):
@@ -189,6 +194,26 @@ class FunctionTestCase(BaseTestCase):
                 pass
             """)
 
+    def test_async_single(self) -> None:
+        self.check(
+            """
+            async def add(a, b):  # type: (int, int) -> int
+                '''# type: yes'''
+            """,
+            """
+            async def add(a: int, b: int) -> int:
+                '''# type: yes'''
+            """)
+        self.check(
+            """
+            async def add(a, b):  # type: (int, int) -> int  # extra comment
+                pass
+            """,
+            """
+            async def add(a: int, b: int) -> int:  # extra comment
+                pass
+            """)
+
     def test_complex_kinds(self) -> None:
         self.check(
             """
@@ -331,9 +356,83 @@ class FunctionTestCase(BaseTestCase):
             """, False, False, 10)
 
 
+class LineReportingTestCase(BaseTestCase):
+    def compare(self, code: str, success: List[int], fail: List[int]) -> None:
+        result = com2ann(dedent(code), silent=True)
+        assert result is not None
+        _, data = result
+        self.assertEqual(data.success, success)
+        self.assertEqual(data.fail, fail)
+
+    def test_simple_assign(self) -> None:
+        self.compare(
+            """
+            x = None  # type: Optional[str]
+            """,
+            [2], [])
+
+    def test_simple_function(self) -> None:
+        self.compare(
+            """
+            def func(arg):
+                # type: (int) -> int
+                pass
+            """,
+            [2], [])
+
+    def test_unsupported_assigns(self) -> None:
+        self.compare(
+            """
+            x, y = None, None  # type: (int, int)
+            x = None  # type: Optional[str]
+            x = y = []  # type: List[int]
+            """,
+            [3], [2, 4])
+
+    def test_invalid_function_comments(self) -> None:
+        self.compare(
+            """
+            def func(arg):
+                # type: bad
+                pass
+            def func(arg):
+                # type: bad -> bad
+                pass
+            """,
+            [], [2, 5])
+
+    def test_confusing_function_comments(self) -> None:
+        self.compare(
+            """
+            def func1(
+                arg  # type: int
+            ):
+                # type: (str) -> int
+                pass
+            def func2(arg1, arg2, arg3):
+                # type: (int) -> int
+                pass
+            """,
+            [], [2, 7])
+
+    def test_unsupported_statements(self) -> None:
+        self.compare(
+            """
+            with foo(x==1) as f: # type: str
+                print(f)
+            with foo(x==1) as f:
+                print(f)
+            x = None  # type: Optional[str]
+            for i, j in my_inter(x=1):
+                i + j
+            for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """,
+            [6], [2, 9])
+
+
 class ForAndWithTestCase(BaseTestCase):
     def test_with(self) -> None:
-        # TODO: support this.
         self.check(
             """
             with foo(x==1) as f: #type: str
@@ -345,7 +444,6 @@ class ForAndWithTestCase(BaseTestCase):
             """)
 
     def test_for(self) -> None:
-        # TODO: support this.
         self.check(
             """
             for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
@@ -353,6 +451,28 @@ class ForAndWithTestCase(BaseTestCase):
             """,
             """
             for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """)
+
+    def test_async_with(self) -> None:
+        self.check(
+            """
+            async with foo(x==1) as f: #type: str
+                print(f)
+            """,
+            """
+            async with foo(x==1) as f: #type: str
+                print(f)
+            """)
+
+    def test_async_for(self) -> None:
+        self.check(
+            """
+            async for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
+                i + j
+            """,
+            """
+            async for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
                 i + j
             """)
 
