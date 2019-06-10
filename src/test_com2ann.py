@@ -198,7 +198,7 @@ class FunctionTestCase(BaseTestCase):
             def embezzle(account: str, funds: int = MANY, *fake_receipts: str, stuff: Any, other: Optional[Any] = None, **kwarg: Any) -> None:
                 # note: vararg and kwarg
                 pass
-            """)
+            """)  # noqa
         self.check(
             """
             def embezzle(account, funds=MANY, *fake_receipts, stuff, other=None, **kwarg):  # type: ignore
@@ -208,7 +208,7 @@ class FunctionTestCase(BaseTestCase):
             """
             def embezzle(account: str, funds: int = MANY, *fake_receipts: str, stuff: Any, other: Optional[Any] = None, **kwarg: Any) -> None:  # type: ignore
                 pass
-            """)
+            """)  # noqa
 
     def test_self_argument(self):
         self.check(
