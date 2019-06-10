@@ -355,6 +355,43 @@ class FunctionTestCase(BaseTestCase):
                 pass
             """, False, False, 10)
 
+    def test_decorator_body(self) -> None:
+        self.check(
+            """
+            def outer(self):  # a method
+                # type: () -> None
+                @deco()
+                def inner():
+                    # type: () -> None
+                    pass
+            """,
+            """
+            def outer(self) -> None:  # a method
+                @deco()
+                def inner() -> None:
+                    pass
+            """)
+        self.check(
+            """
+            def func(
+                x,  # type: int
+                *other,  # type: Any
+            ):
+                # type: () -> None
+                @dataclass
+                class C:
+                    x = None  # type: int
+            """,
+            """
+            def func(
+                x: int,
+                *other: Any,
+            ) -> None:
+                @dataclass
+                class C:
+                    x: int
+            """, n=True)
+
 
 class LineReportingTestCase(BaseTestCase):
     def compare(self, code: str, success: List[int], fail: List[int]) -> None:
