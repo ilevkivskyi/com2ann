@@ -101,6 +101,9 @@ class TypeCommentCollector(ast.NodeVisitor):
             tuple_rvalue = isinstance(s.value, ast.Tuple)
             none_rvalue = isinstance(s.value, ast.Constant) and s.value.value is None
             ellipsis_rvalue = isinstance(s.value, ast.Constant) and s.value.value is Ellipsis
+
+            assert (target.end_lineno and target.end_col_offset and
+                    s.value.end_lineno and s.value.end_col_offset)
             found = AssignData(s.type_comment,
                                target.end_lineno, target.end_col_offset,
                                s.value.lineno, s.value.col_offset,
@@ -120,10 +123,11 @@ class TypeCommentCollector(ast.NodeVisitor):
 
             args = self.process_per_arg_comments(fdef, num_non_defs, num_kw_non_defs)
 
+            ret: Optional[str]
             if fdef.type_comment:
                 f_args, ret = split_function_comment(fdef.type_comment)
             else:
-                f_args = [], ret = None
+                f_args, ret = [], None
 
             if args and f_args:
                 # TODO: handle gracefully.
@@ -144,20 +148,24 @@ class TypeCommentCollector(ast.NodeVisitor):
 
         for i, a in enumerate(fdef.args.args):
             if a.type_comment:
+                assert a.end_col_offset
                 args.append(ArgComment(a.type_comment,
                                        a.lineno, a.end_col_offset,
                                        i >= num_non_defs))
         if fdef.args.vararg and fdef.args.vararg.type_comment:
+            assert fdef.args.vararg.end_col_offset
             args.append(ArgComment(fdef.args.vararg.type_comment,
                                    fdef.args.vararg.lineno, fdef.args.vararg.end_col_offset,
                                    False))
 
         for i, a in enumerate(fdef.args.kwonlyargs):
             if a.type_comment:
+                assert a.end_col_offset
                 args.append(ArgComment(a.type_comment,
                                        a.lineno, a.end_col_offset,
                                        i >= num_kw_non_defs))
         if fdef.args.kwarg and fdef.args.kwarg.type_comment:
+            assert fdef.args.kwarg.end_col_offset
             args.append(ArgComment(fdef.args.kwarg.type_comment,
                                    fdef.args.kwarg.lineno, fdef.args.kwarg.end_col_offset,
                                    False))
@@ -194,6 +202,8 @@ class TypeCommentCollector(ast.NodeVisitor):
                 has_default = True
             if a in fdef.args.kwonlyargs and fdef.args.kwonlyargs.index(a) >= num_kw_non_defs:
                 has_default = True
+
+            assert a.end_col_offset
             args.append(ArgComment(typ,
                                    a.lineno, a.end_col_offset,
                                    has_default))
@@ -256,7 +266,7 @@ def split_function_comment(comment: str) -> Tuple[List[str], str]:
 
 def strip_type_comment(line: str) -> str:
     match = re.search(TYPE_COM, line)
-    assert match
+    assert match, line
     if match.group(1).lstrip().startswith('ignore'):
         # Keep # type: ignore[=code] comments.
         return line
@@ -266,6 +276,7 @@ def strip_type_comment(line: str) -> str:
     _, sub_comment = split_sub_comment(typ)
     if sub_comment is None:
         trailer = re.search(_TRAILER, typ)
+        assert trailer
         sub_comment = typ[trailer.start():]
 
     if rest:
@@ -369,6 +380,7 @@ def wrap_function_header(header: str) -> List[str]:
         return parts
 
     # Indent all the wrapped lines.
+    assert indent is not None
     parts = [parts[0]] + [' ' * indent + p.lstrip(' \t') for p in parts[1:]]
 
     # Add end lines like in the original header.
@@ -534,8 +546,8 @@ def translate_file(infile: str, outfile: str,
     if new_code is None:
         print("SyntaxError in", infile)
         return
-    with open(outfile, 'wb') as f:
-        f.write(new_code.encode(enc))
+    with open(outfile, 'wb') as fo:
+        fo.write(new_code.encode(enc))
 
 
 if __name__ == '__main__':

@@ -11,3 +11,4 @@ script:
   - export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
   - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then flake8 --config=.flake8 src/com2ann.py; fi
   - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then flake8 --config=.flake8-tests src/test_com2ann.py; fi
+  - mypy src/com2ann.py
