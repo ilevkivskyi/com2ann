@@ -181,6 +181,11 @@ class TypeCommentCollector(ast.NodeVisitor):
                 return
 
             body_start = fdef.body[0].lineno
+            if isinstance(fdef.body[0], (ast.AsyncFunctionDef,
+                                         ast.FunctionDef,
+                                         ast.ClassDef)):
+                if fdef.body[0].decorator_list:
+                    body_start = min(it.lineno for it in fdef.body[0].decorator_list)
             if args:
                 self.found.append(FunctionData(args, ret, fdef.lineno, body_start))
             elif not f_args:
