@@ -20,7 +20,7 @@ from collections import defaultdict
 from io import BytesIO
 from dataclasses import dataclass
 
-from typing import List, DefaultDict, Tuple, Optional, Union
+from typing import List, DefaultDict, Tuple, Optional, Union, Set
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -29,6 +29,8 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
 # For internal use only.
 _TRAILER = re.compile(r'\s*$', flags=re.DOTALL)
 _NICE_IGNORE = re.compile(r'\s*# type: ignore\s*$', flags=re.DOTALL)
+
+FUTURE_IMPORT_WHITELIST = {'str', 'int', 'bool', 'None'}
 
 Unsupported = Union[ast.For, ast.AsyncFor, ast.With, ast.AsyncWith]
 Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
@@ -39,6 +41,7 @@ class Options:
     drop_none: bool
     drop_ellipsis: bool
     silent: bool
+    add_future_imports: bool = False
     wrap_signatures: int = 0
     python_minor_version: int = -1
 
@@ -99,6 +102,9 @@ class FileData:
         # Basic translation logging.
         self.success: List[int] = []  # list of lines where type comments where processed
         self.fail: List[int] = []  # list of lines where type comments where rejected
+
+        # Types we have inserted during translation.
+        self.seen: Set[str] = set()
 
 
 class TypeCommentCollector(ast.NodeVisitor):
@@ -417,6 +423,7 @@ def process_assign(comment: AssignData, data: FileData,
     lvalue_line = lines[comment.lvalue_end_line - 1]
 
     typ, _ = split_sub_comment(comment.type_comment)
+    data.seen.add(typ)
 
     # TODO: this is pretty ad hoc.
     lv_line = lines[comment.lvalue_end_line - 1]
@@ -429,8 +436,9 @@ def process_assign(comment: AssignData, data: FileData,
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
-def insert_arg_type(line: str, arg: ArgComment) -> str:
+def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
     typ, _ = split_sub_comment(arg.type_comment)
+    seen.add(typ)
 
     new_line = line[:arg.arg_end_offset] + ': ' + typ
 
@@ -520,13 +528,15 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
 
     # Inserting return type is a bit dirty...
     if func_type.ret_type:
+        data.seen.add(func_type.ret_type)
         right_par = lines[ret_line][:colon].rindex(')')
         lines[ret_line] = (lines[ret_line][:right_par + 1] +
                            ' -> ' + func_type.ret_type +
                            lines[ret_line][colon:])
 
     for arg in reversed(func_type.arg_types):
-        lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg)
+        lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg,
+                                                  data.seen)
 
     if ret_line == func_type.header_start_line - 1:
         header = data.lines[ret_line]
@@ -535,7 +545,8 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
 
 
 def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool,
-                 wrap_sig: int = 0, silent: bool = True) -> str:
+                 wrap_sig: int = 0, silent: bool = True,
+                 add_future_imports: bool = False) -> str:
     finder = TypeCommentCollector(silent)
     finder.visit(data.tree)
 
@@ -549,6 +560,15 @@ def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool,
         elif isinstance(item, FunctionData):
             process_func_def(item, data, wrap_sig)
             data.success.append(item.header_start_line)
+
+    if add_future_imports and data.success and not data.seen <= FUTURE_IMPORT_WHITELIST:
+        # Find first non-trivial line of code.
+        i = 0
+        while not data.lines[i].split('#')[0].strip():
+            i += 1
+        trailer = re.search(_TRAILER, data.lines[i])
+        assert trailer
+        data.lines.insert(i, 'from __future__ import annotations' + trailer.group())
 
     return ''.join(data.lines)
 
@@ -575,6 +595,7 @@ def com2ann(code: str, *,
             drop_none: bool = False,
             drop_ellipsis: bool = False,
             silent: bool = False,
+            add_future_imports: bool = False,
             wrap_sig: int = 0,
             python_minor_version: int = -1) -> Optional[Tuple[str, FileData]]:
     """Translate type comments to type annotations in code.
@@ -614,7 +635,8 @@ def com2ann(code: str, *,
     tokens = list(tokenize.tokenize(rl))
 
     data = FileData(lines, tokens, tree)
-    new_code = com2ann_impl(data, drop_none, drop_ellipsis, wrap_sig, silent)
+    new_code = com2ann_impl(data, drop_none, drop_ellipsis,
+                            wrap_sig, silent, add_future_imports)
 
     if not silent:
         if data.success:
@@ -640,10 +662,16 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         enc = f.encoding
     if not options.silent:
         print('File:', infile)
+
+    future_imports = options.add_future_imports
+    if outfile.endswith('.pyi'):
+        future_imports = False
+
     result = com2ann(code,
                      drop_none=options.drop_none,
                      drop_ellipsis=options.drop_ellipsis,
                      silent=options.silent,
+                     add_future_imports=future_imports,
                      wrap_sig=options.wrap_signatures,
                      python_minor_version=options.python_minor_version)
     if result is None:
@@ -677,6 +705,10 @@ if __name__ == '__main__':
                         help="drop any Ellipsis (...) as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+    parser.add_argument("-i", "--add-future-imports",
+                        help="Add 'from __future__ import annotations' to any file\n"
+                        "where type comments were successfully translated",
+                        action="store_true")
     parser.add_argument("-w", "--wrap-signatures",
                         help="Wrap function headers that are longer than given length",
                         type=int, default=0)
@@ -689,7 +721,8 @@ if __name__ == '__main__':
         args.outfile = args.infile
 
     options = Options(args.drop_none, args.drop_ellipsis,
-                      args.silent, args.wrap_signatures,
+                      args.silent, args.add_future_imports,
+                      args.wrap_signatures,
                       args.python_minor_version)
 
     if os.path.isfile(args.infile):
