@@ -682,8 +682,7 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         fo.write(new_code.encode(enc))
 
 
-if __name__ == '__main__':
-
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--outfile",
                         help="output file, will be overwritten if exists,\n"
@@ -734,3 +733,7 @@ if __name__ == '__main__':
                 if ext == '.py' or ext == '.pyi':
                     file_name = os.path.join(root, file)
                     translate_file(file_name, file_name, options)
+
+
+if __name__ == '__main__':
+    main()
