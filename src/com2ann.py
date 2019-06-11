@@ -374,7 +374,19 @@ def process_assign(comment: AssignData, data: FileData,
 
     rv_end = comment.rvalue_end_line - 1
     rv_start = comment.rvalue_start_line - 1
-    lines[rv_end] = strip_type_comment(lines[rv_end])
+    if re.search(TYPE_COM, lines[rv_end]):
+        lines[rv_end] = strip_type_comment(lines[rv_end])
+    else:
+        # Special case: type comment moved to a separate continuation line.
+        assert (lines[rv_end].rstrip().endswith('\\') or
+                lines[rv_end + 1].lstrip().startswith(')'))
+        lines[rv_end + 1] = strip_type_comment(lines[rv_end + 1])
+        if not lines[rv_end + 1].strip():
+            del lines[rv_end + 1]
+            # Also remove the \ symbol from the previous line.
+            trailer = re.search(_TRAILER, lines[rv_end])
+            assert trailer
+            lines[rv_end] = lines[rv_end].rstrip()[:-1].rstrip() + trailer.group()
 
     if comment.tuple_rvalue:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
