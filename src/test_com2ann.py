@@ -10,9 +10,11 @@ from typing import Optional, List
 class BaseTestCase(unittest.TestCase):
 
     def check(self, code: str, expected: Optional[str],
-              n: bool = False, e: bool = False, w: int = 0) -> None:
+              n: bool = False, e: bool = False,
+              w: int = 0, i: bool = False) -> None:
         result = com2ann(dedent(code),
-                         drop_none=n, drop_ellipsis=e, silent=True, wrap_sig=w)
+                         drop_none=n, drop_ellipsis=e, silent=True,
+                         wrap_sig=w, add_future_imports=i)
         if expected is None:
             self.assertIs(result, None)
         else:
@@ -567,6 +569,50 @@ class ForAndWithTestCase(BaseTestCase):
             async for i, j in my_inter(x=1): # type: (int, int)  # type: ignore
                 i + j
             """)
+
+
+class FutureImportTestCase(BaseTestCase):
+    def test_added_future_import(self) -> None:
+        self.check(
+            """
+            # coding: utf-8
+
+            x = None  # type: Optional[str]
+            """,
+            """
+            # coding: utf-8
+
+            from __future__ import annotations
+            x: Optional[str] = None
+            """, i=True)
+
+    def test_not_added_future_import(self) -> None:
+        self.check(
+            """
+            x = 1
+            """,
+            """
+            x = 1
+            """, i=True)
+        self.check(
+            """
+            x, y = a, b  # type: Tuple[int, int]
+            """,
+            """
+            x, y = a, b  # type: Tuple[int, int]
+            """, i=True)
+        self.check(
+            """
+            def foo(arg1, arg2):
+                # type: (int, str) -> None
+                pass
+            x = False  # type: bool
+            """,
+            """
+            def foo(arg1: int, arg2: str) -> None:
+                pass
+            x: bool = False
+            """, i=True)
 
 
 if __name__ == '__main__':
