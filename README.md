@@ -6,7 +6,7 @@ com2ann
 
 Tool for translation type comments to type annotations in Python.
 
-The tool requires Python 3.8 to run. Bu the supported target code version
+The tool requires Python 3.8 to run. But the supported target code version
 is Python 3.4+ (can be specified with `--python-minor-version`).
 
 Currently, the tool translates function and assignment type comments to
