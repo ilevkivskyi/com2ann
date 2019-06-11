@@ -172,6 +172,33 @@ class AssignTestCase(BaseTestCase):
         self.check("x = None  # type: Optional[Literal['#']]",
                    "x: Optional[Literal['#']] = None")
 
+    def test_comment_on_separate_line(self) -> None:
+        self.check(
+            """
+            bar = {} \\
+                # type: SuperLongType[WithArgs]
+            """,
+            """
+            bar: SuperLongType[WithArgs] = {}
+            """)
+        self.check(
+            """
+            bar = {} \\
+                # type: SuperLongType[WithArgs]  # noqa
+            """,
+            """
+            bar: SuperLongType[WithArgs] = {} \\
+                # noqa
+            """)
+        self.check(
+            """
+            bar = None \\
+                # type: SuperLongType[WithArgs]
+            """,
+            """
+            bar: SuperLongType[WithArgs]
+            """, n=True)
+
 
 class FunctionTestCase(BaseTestCase):
     def test_single(self) -> None:
