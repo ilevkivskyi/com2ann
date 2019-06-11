@@ -378,7 +378,8 @@ def process_assign(comment: AssignData, data: FileData,
         lines[rv_end] = strip_type_comment(lines[rv_end])
     else:
         # Special case: type comment moved to a separate continuation line.
-        assert lines[rv_end].rstrip().endswith('\\')
+        assert (lines[rv_end].rstrip().endswith('\\') or
+                lines[rv_end + 1].lstrip().startswith(')'))
         lines[rv_end + 1] = strip_type_comment(lines[rv_end + 1])
         if not lines[rv_end + 1].strip():
             del lines[rv_end + 1]

@@ -199,6 +199,34 @@ class AssignTestCase(BaseTestCase):
             bar: SuperLongType[WithArgs]
             """, n=True)
 
+    def test_continuation_using_parens(self) -> None:
+        self.check(
+            """
+            X = (
+                {one}
+                | {other}
+            )  # type: Final  # another option
+            """,
+            """
+            X: Final = (
+                {one}
+                | {other}
+            )  # another option
+            """)
+        self.check(
+            """
+            X = (  # type: ignore
+                {one}
+                | {other}
+            )  # type: Final
+            """,
+            """
+            X: Final = (  # type: ignore
+                {one}
+                | {other}
+            )
+            """)
+
 
 class FunctionTestCase(BaseTestCase):
     def test_single(self) -> None:
