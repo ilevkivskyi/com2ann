@@ -662,6 +662,8 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         enc = f.encoding
     if not options.silent:
         print('File:', infile)
+    if outfile.endswith('.pyi'):
+        options.add_future_imports = False
     result = com2ann(code,
                      drop_none=options.drop_none,
                      drop_ellipsis=options.drop_ellipsis,
