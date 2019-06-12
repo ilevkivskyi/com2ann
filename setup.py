@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 
+import sys
 from setuptools import setup
+
+if sys.version_info < (3, 8, 0):
+    sys.stderr.write("ERROR: You need Python 3.8 or later to use com2ann.\n")
+    exit(1)
 
 version = '0.1.0'
 description = 'Tool to translate type comments to annotations.'

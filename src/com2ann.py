@@ -16,6 +16,7 @@ import sys
 import argparse
 import tokenize
 from tokenize import TokenInfo
+from enum import Enum, auto
 from collections import defaultdict
 from io import BytesIO
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 @dataclass
 class Options:
+    """Config options, see details in main()."""
     drop_none: bool
     drop_ellipsis: bool
     silent: bool
@@ -46,27 +48,40 @@ class Options:
     python_minor_version: int = -1
 
 
+class RvalueKind(Enum):
+    """Special cases for assignment r.h.s."""
+    OTHER = auto()
+    TUPLE = auto()
+    NONE = auto()
+    ELLIPSIS = auto()
+
+
 @dataclass
 class AssignData:
+    """Location data for translating assignment type comment."""
     type_comment: str
 
+    # Position where l.h.s. ends (may not include closing paren).
     lvalue_end_line: int
     lvalue_end_offset: int
 
+    # Position range for the r.h.s. (may also not include parentheses
+    # if they are redundant).
     rvalue_start_line: int
     rvalue_start_offset: int
     rvalue_end_line: int
     rvalue_end_offset: int
 
-    tuple_rvalue: bool = False
-    none_rvalue: bool = False
-    ellipsis_rvalue: bool = False
+    # Is there any r.h.s. that requires special treatment.
+    rvalue_kind: RvalueKind = RvalueKind.OTHER
 
 
 @dataclass
 class ArgComment:
+    """Location data for insertion of an argument annotation."""
     type_comment: str
 
+    # Place where a given argument ends, insert an annotation here.
     arg_line: int
     arg_end_offset: int
 
@@ -75,10 +90,13 @@ class ArgComment:
 
 @dataclass
 class FunctionData:
+    """Location data for translating function comment."""
     arg_types: List[ArgComment]
     ret_type: Optional[str]
 
+    # The line where 'def' appears.
     header_start_line: int
+    # This doesn't include any comments or whitespace-only lines.
     body_first_line: int
 
 
@@ -108,10 +126,17 @@ class FileData:
 
 
 class TypeCommentCollector(ast.NodeVisitor):
+    """Visitor to collect type comments from an AST.
+
+    This also records other necessary information such as location data for
+    various nodes and their kinds.
+    """
     def __init__(self, silent: bool) -> None:
         super().__init__()
         self.silent = silent
+        # Type comments we can translate.
         self.found: List[Union[AssignData, FunctionData]] = []
+        # Type comments that are not supported yet (for reporting).
         self.found_unsupported: List[int] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
@@ -122,9 +147,15 @@ class TypeCommentCollector(ast.NodeVisitor):
             target = s.targets[0]
             value = s.value
 
-            tuple_rvalue = isinstance(value, ast.Tuple)
-            none_rvalue = isinstance(value, ast.Constant) and value.value is None
-            ellipsis_rvalue = isinstance(value, ast.Constant) and value.value is Ellipsis
+            # These may require special treatment.
+            if isinstance(value, ast.Tuple):
+                rvalue_kind = RvalueKind.TUPLE
+            elif isinstance(value, ast.Constant) and value.value is None:
+                rvalue_kind = RvalueKind.NONE
+            elif isinstance(value, ast.Constant) and value.value is Ellipsis:
+                rvalue_kind = RvalueKind.ELLIPSIS
+            else:
+                rvalue_kind = RvalueKind.OTHER
 
             assert (target.end_lineno and target.end_col_offset and
                     value.end_lineno and value.end_col_offset)
@@ -132,7 +163,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                                target.end_lineno, target.end_col_offset,
                                value.lineno, value.col_offset,
                                value.end_lineno, value.end_col_offset,
-                               tuple_rvalue, none_rvalue, ellipsis_rvalue)
+                               rvalue_kind)
             self.found.append(found)
 
     def visit_For(self, o: ast.For) -> None:
@@ -163,7 +194,11 @@ class TypeCommentCollector(ast.NodeVisitor):
                 any(a.type_comment for a in fdef.args.kwonlyargs) or
                 fdef.args.vararg and fdef.args.vararg.type_comment or
                 fdef.args.kwarg and fdef.args.kwarg.type_comment):
+
+            # Number of non-default positional arguments.
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
+
+            # Number of non-default keyword-only arguments.
             num_kw_non_defs = (len(fdef.args.kwonlyargs) -
                                len([d for d in fdef.args.kw_defaults if d is not None]))
 
@@ -190,6 +225,8 @@ class TypeCommentCollector(ast.NodeVisitor):
             if isinstance(fdef.body[0], (ast.AsyncFunctionDef,
                                          ast.FunctionDef,
                                          ast.ClassDef)):
+                # We need to compensate for decorators, because the first line of a
+                # class/function is the line where 'class' or 'def' appears.
                 if fdef.body[0].decorator_list:
                     body_start = min(it.lineno for it in fdef.body[0].decorator_list)
             if args:
@@ -200,7 +237,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 c_args = self.process_function_comment(fdef, f_args,
                                                        num_non_defs, num_kw_non_defs)
                 if c_args is None:
-                    # There was an error.
+                    # There was an error processing comment.
                     return
                 self.found.append(FunctionData(c_args, ret, fdef.lineno, body_start))
         self.generic_visit(fdef)
@@ -208,6 +245,16 @@ class TypeCommentCollector(ast.NodeVisitor):
     def process_per_arg_comments(self, fdef: Function,
                                  num_non_defs: int,
                                  num_kw_non_defs: int) -> List[ArgComment]:
+        """Collect information about per-argument function comments.
+
+        These comments look like:
+
+            def func(
+                arg1,  # type: Type1
+                arg2,  # type: Type2
+            ):
+                ...
+        """
         args: List[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
@@ -241,6 +288,12 @@ class TypeCommentCollector(ast.NodeVisitor):
                                  f_args: List[str],
                                  num_non_defs: int,
                                  num_kw_non_defs: int) -> Optional[List[ArgComment]]:
+        """Combine location data for function arguments with types from a comment.
+
+        f_args contains already split argument strings from the function type comment,
+        for example if the comment is # type: (int, str) -> None, the f_args should be
+        ['int', 'str'].
+        """
         args: List[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
@@ -249,6 +302,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         if fdef.args.kwarg:
             tot_args += 1
 
+        # One is only allowed to skip annotation for self or cls.
         if len(f_args) not in (tot_args, tot_args - 1):
             if not self.silent:
                 print(f'Invalid number of arguments in comment for "{fdef.name}"',
@@ -256,17 +310,20 @@ class TypeCommentCollector(ast.NodeVisitor):
             self.found_unsupported.append(fdef.lineno)
             return None
 
+        # The list of arguments we need to annnotate.
         if len(f_args) == tot_args - 1:
             iter_args = fdef.args.args[1:]
         else:
             iter_args = fdef.args.args.copy()
 
+        # Extend the list with other possible arguments.
         if fdef.args.vararg:
             iter_args.append(fdef.args.vararg)
         iter_args.extend(fdef.args.kwonlyargs)
         if fdef.args.kwarg:
             iter_args.append(fdef.args.kwarg)
 
+        # Combine arguments locations with corresponding comments.
         for typ, a in zip(f_args, iter_args):
             has_default = False
             if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
@@ -304,6 +361,14 @@ def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
 
 def split_function_comment(comment: str,
                            silent: bool = False) -> Optional[Tuple[List[str], str]]:
+    """Split function type comment into argument types and return types.
+
+    This also removes any additional sub-comment. For example:
+
+        # type: (int, str) -> None  # some explanation
+
+    is transformed into: ['int', 'str'], 'None'.
+    """
     typ, _ = split_sub_comment(comment)
     if '->' not in typ:
         if not silent:
@@ -324,7 +389,6 @@ def split_function_comment(comment: str,
         return None
 
     arg_list = arg_list[1:-1]
-
     args: List[str] = []
 
     # TODO: use tokenizer to guard against Literal[','].
@@ -344,10 +408,17 @@ def split_function_comment(comment: str,
     if next_arg:
         args.append(next_arg.strip())
 
+    # Currently mypy just ignores * and ** and just gets the argument kind from the
+    # function header, so we don't need any additional checks.
     return [a.lstrip('*') for a in args if a != '...'], ret
 
 
 def strip_type_comment(line: str) -> str:
+    """Remove any type comments from this line.
+
+    We however keep # type: ignore comments, and any sub-comments.
+    This raises if there is no type comment found.
+    """
     match = re.search(TYPE_COM, line)
     assert match, line
     if match.group(1).lstrip().startswith('ignore'):
@@ -358,6 +429,7 @@ def strip_type_comment(line: str) -> str:
     typ = match.group(1)
     _, sub_comment = split_sub_comment(typ)
     if sub_comment is None:
+        # Just keep exactly the same kind of endline.
         trailer = re.search(_TRAILER, typ)
         assert trailer
         sub_comment = typ[trailer.start():]
@@ -376,29 +448,50 @@ def string_insert(line: str, extra: str, pos: int) -> str:
 
 def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
+    """Process type comment in an assignment statement.
+
+    Remove the matching r.h.s. if drop_none or drop_ellipsis is True.
+    For example:
+
+        x = ...  # type: int
+
+    will be translated to
+
+        x: int
+    """
     lines = data.lines
 
+    # In ast module line numbers start from 1, not 0.
     rv_end = comment.rvalue_end_line - 1
     rv_start = comment.rvalue_start_line - 1
+
+    # We perform the tasks in order from larger line/columns to smaller ones
+    # to avoid shuffling the line column numbers in following code.
+    # First remove the type comment.
     if re.search(TYPE_COM, lines[rv_end]):
         lines[rv_end] = strip_type_comment(lines[rv_end])
     else:
         # Special case: type comment moved to a separate continuation line.
-        assert (lines[rv_end].rstrip().endswith('\\') or
-                lines[rv_end + 1].lstrip().startswith(')'))
+        # There two ways to have continuation...
+        assert (lines[rv_end].rstrip().endswith('\\') or  # ... a slash
+                lines[rv_end + 1].lstrip().startswith(')'))  # ... inside parentheses
+
         lines[rv_end + 1] = strip_type_comment(lines[rv_end + 1])
         if not lines[rv_end + 1].strip():
             del lines[rv_end + 1]
-            # Also remove the \ symbol from the previous line.
+            # Also remove the \ symbol from the previous line, but keep
+            # the original line ending.
             trailer = re.search(_TRAILER, lines[rv_end])
             assert trailer
             lines[rv_end] = lines[rv_end].rstrip()[:-1].rstrip() + trailer.group()
 
-    if comment.tuple_rvalue:
+    # Second we take care of r.h.s. special cases.
+    if comment.rvalue_kind == RvalueKind.TUPLE:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
         if not (lines[rv_start][comment.rvalue_start_offset] == '(' and
                 lines[rv_end][comment.rvalue_end_offset - 1] == ')'):
-            # We need to wrap rvalue in parentheses before Python 3.8.
+            # We need to wrap rvalue in parentheses before Python 3.8,
+            # because x: Tuple[int, ...] = 1, 2, 3 used to be a syntax error.
             end_line = lines[rv_end]
             lines[rv_end] = string_insert(end_line, ')',
                                           comment.rvalue_end_offset)
@@ -413,22 +506,23 @@ def process_assign(comment: AssignData, data: FileData,
                     if lines[i - 1].strip():
                         lines[i - 1] = ' ' + lines[i - 1]
 
-    elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
+    elif (comment.rvalue_kind == RvalueKind.NONE and drop_none or
+          comment.rvalue_kind == RvalueKind.ELLIPSIS and drop_ellipsis):
         # TODO: more tricky (multi-line) cases.
-        assert comment.lvalue_end_line == comment.rvalue_end_line
-        line = lines[comment.lvalue_end_line - 1]
-        lines[comment.lvalue_end_line - 1] = (line[:comment.lvalue_end_offset] +
-                                              line[comment.rvalue_end_offset:])
+        if comment.lvalue_end_line == comment.rvalue_end_line:
+            line = lines[comment.lvalue_end_line - 1]
+            lines[comment.lvalue_end_line - 1] = (line[:comment.lvalue_end_offset] +
+                                                  line[comment.rvalue_end_offset:])
 
+    # Finally we insert the annotation.
     lvalue_line = lines[comment.lvalue_end_line - 1]
-
     typ, _ = split_sub_comment(comment.type_comment)
     data.seen.add(typ)
 
+    # Take care of '(foo) = bar  # type: baz'.
     # TODO: this is pretty ad hoc.
-    lv_line = lines[comment.lvalue_end_line - 1]
-    while (comment.lvalue_end_offset < len(lv_line) and
-           lv_line[comment.lvalue_end_offset] == ')'):
+    while (comment.lvalue_end_offset < len(lvalue_line) and
+           lvalue_line[comment.lvalue_end_offset] == ')'):
         comment.lvalue_end_offset += 1
 
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
@@ -437,6 +531,10 @@ def process_assign(comment: AssignData, data: FileData,
 
 
 def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
+    """Insert the argument type at a given location.
+
+    Also record the type we translated.
+    """
     typ, _ = split_sub_comment(arg.type_comment)
     seen.add(typ)
 
@@ -455,6 +553,20 @@ def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
 
 
 def wrap_function_header(header: str) -> List[str]:
+    """Wrap long function signature (header) one argument per line.
+
+    Currently only headers that are initially one-line are supported.
+    For example:
+
+        def foo(arg1: LongType1, arg2: LongType2) -> None:
+            ...
+
+    becomes
+
+        def foo(arg1: LongType1,
+                arg2: LongType2) -> None:
+            ...
+    """
     # TODO: use tokenizer to guard against Literal[','].
     parts: List[str] = []
     next_part = ''
@@ -470,6 +582,7 @@ def wrap_function_header(header: str) -> List[str]:
         if c in ')]}':
             nested -= 1
             if not nested:
+                # To avoid splitting return types that also have commas.
                 complete = True
         if c == ',' and nested == 1 and not complete:
             next_part += c
@@ -487,7 +600,7 @@ def wrap_function_header(header: str) -> List[str]:
     assert indent is not None
     parts = [parts[0]] + [' ' * indent + p.lstrip(' \t') for p in parts[1:]]
 
-    # Add end lines like in the original header.
+    # Add line endings like in the original header.
     trailer = re.search(_TRAILER, header)
     assert trailer
     end_line = header[trailer.start():].lstrip(' \t')
@@ -508,9 +621,21 @@ def wrap_function_header(header: str) -> List[str]:
 
 
 def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> None:
+    """Perform translation for an (async) function definition.
+
+    This supports two main ways of adding type comments for argument:
+
+        def one(
+            arg,  # type: Type
+        ):
+            ...
+
+        def another(arg):
+            # type: (Type) -> AnotherType
+    """
     lines = data.lines
 
-    # Find column where _actual_ colon is located.
+    # Find line and column where _actual_ colon is located.
     ret_line = func_type.body_first_line - 1
     ret_line -= 1
     while not lines[ret_line].split('#')[0].strip():
@@ -523,6 +648,7 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
             break
     assert colon is not None
 
+    # Note that -1 offset is because line numbers starts from 1 in ast module.
     for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
         if re.search(TYPE_COM, lines[i]):
             lines[i] = strip_type_comment(lines[i])
@@ -537,10 +663,12 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
                            ' -> ' + func_type.ret_type +
                            lines[ret_line][colon:])
 
+    # Inserting argument types is pretty straightforward.
     for arg in reversed(func_type.arg_types):
         lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg,
                                                   data.seen)
 
+    # Finally wrap the translated function header if needed.
     if ret_line == func_type.header_start_line - 1:
         header = data.lines[ret_line]
         if wrap_sig and len(header) > wrap_sig:
@@ -550,12 +678,18 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
 def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool,
                  wrap_sig: int = 0, silent: bool = True,
                  add_future_imports: bool = False) -> str:
+    """Collect type annotations in AST and perform code translation.
+
+    Add the future import if necessary. Currently only type comments in
+    functions and simple assignments are supported.
+    """
     finder = TypeCommentCollector(silent)
     finder.visit(data.tree)
 
     data.fail.extend(finder.found_unsupported)
     found = list(reversed(finder.found))
 
+    # Perform translations in reverse order to avoid shuffling line numbers.
     for item in found:
         if isinstance(item, AssignData):
             process_assign(item, data, drop_none, drop_ellipsis)
@@ -670,13 +804,20 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
     if outfile.endswith('.pyi'):
         future_imports = False
 
-    result = com2ann(code,
-                     drop_none=options.drop_none,
-                     drop_ellipsis=options.drop_ellipsis,
-                     silent=options.silent,
-                     add_future_imports=future_imports,
-                     wrap_sig=options.wrap_signatures,
-                     python_minor_version=options.python_minor_version)
+    try:
+        result = com2ann(code,
+                         drop_none=options.drop_none,
+                         drop_ellipsis=options.drop_ellipsis,
+                         silent=options.silent,
+                         add_future_imports=future_imports,
+                         wrap_sig=options.wrap_signatures,
+                         python_minor_version=options.python_minor_version)
+    except Exception:
+        print(f"INTERNAL ERROR while processing {infile}", file=sys.stderr)
+        print("Please report bug at https://github.com/ilevkivskyi/com2ann/issues",
+              file=sys.stderr)
+        raise
+
     if result is None:
         print("SyntaxError in", infile, file=sys.stderr)
         return
@@ -688,15 +829,15 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--outfile",
-                        help="output file, will be overwritten if exists,\n"
-                             "defaults to input file")
+                        help="output file or directory, will be overwritten if exists,\n"
+                             "defaults to input file or directory")
     parser.add_argument("infile",
                         help="input file or directory for translation, must\n"
-                             "contain no syntax errors, for directory\n"
-                             "the outfile is ignored and translation is\n"
-                             "made in place")
+                             "contain no syntax errors;\n"
+                             "if --outfile is not given, translation is\n"
+                             "made *in place*")
     parser.add_argument("-s", "--silent",
-                        help="Do not print summary for line numbers of\n"
+                        help="do not print summary for line numbers of\n"
                              "translated and rejected comments",
                         action="store_true")
     parser.add_argument("-n", "--drop-none",
@@ -708,11 +849,11 @@ def main() -> None:
                         "translation if it is annotated by a type comment",
                         action="store_true")
     parser.add_argument("-i", "--add-future-imports",
-                        help="Add 'from __future__ import annotations' to any file\n"
+                        help="add 'from __future__ import annotations' to any file\n"
                         "where type comments were successfully translated",
                         action="store_true")
     parser.add_argument("-w", "--wrap-signatures",
-                        help="Wrap function headers that are longer than given length",
+                        help="wrap function headers that are longer than given length",
                         type=int, default=0)
     parser.add_argument("-v", "--python-minor-version",
                         help="Python 3 minor version to use to parse the files",
@@ -730,12 +871,20 @@ def main() -> None:
     if os.path.isfile(args.infile):
         translate_file(args.infile, args.outfile, options)
     else:
+        if os.path.isfile(args.outfile):
+            print("If input is a directory, output must not be a file",
+                  file=sys.stderr)
+            exit(2)
         for root, _, files in os.walk(args.infile):
+            rel_root = os.path.relpath(root, args.infile)
+            out_root = os.path.join(args.outfile, rel_root)
+            os.makedirs(out_root, exist_ok=True)
             for file in files:
                 _, ext = os.path.splitext(file)
                 if ext == '.py' or ext == '.pyi':
                     file_name = os.path.join(root, file)
-                    translate_file(file_name, file_name, options)
+                    out_file_name = os.path.join(out_root, file)
+                    translate_file(file_name, out_file_name, options)
 
 
 if __name__ == '__main__':
