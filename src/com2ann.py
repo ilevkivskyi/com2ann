@@ -459,6 +459,7 @@ def wrap_function_header(header: str) -> List[str]:
     parts: List[str] = []
     next_part = ''
     nested = 0
+    complete = False  # Did we split all the arguments inside (...)?
     indent: Optional[int] = None
 
     for i, c in enumerate(header):
@@ -468,7 +469,9 @@ def wrap_function_header(header: str) -> List[str]:
                 indent = i + 1
         if c in ')]}':
             nested -= 1
-        if c == ',' and nested == 1:
+            if not nested:
+                complete = True
+        if c == ',' and nested == 1 and not complete:
             next_part += c
             parts.append(next_part)
             next_part = ''
