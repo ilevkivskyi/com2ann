@@ -462,6 +462,30 @@ class FunctionTestCase(BaseTestCase):
                     x: int
             """, n=True)
 
+    def test_keyword_only_args(self) -> None:
+        self.check(
+            """
+            def func(self,
+                *,
+                account,
+                callback,  # type: Callable[[], None]
+                start=0,  # type: int
+                order,  # type: bool
+                ):
+                # type: (...) -> None
+                ...
+            """,
+            """
+            def func(self,
+                *,
+                account,
+                callback: Callable[[], None],
+                start: int = 0,
+                order: bool,
+                ) -> None:
+                ...
+            """)
+
 
 class LineReportingTestCase(BaseTestCase):
     def compare(self, code: str, success: List[int], fail: List[int]) -> None:
