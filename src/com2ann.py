@@ -695,15 +695,15 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--outfile",
-                        help="output file, will be overwritten if exists,\n"
-                             "defaults to input file")
+                        help="output file or directory, will be overwritten if exists,\n"
+                             "defaults to input file or directory")
     parser.add_argument("infile",
                         help="input file or directory for translation, must\n"
-                             "contain no syntax errors, for directory\n"
-                             "the outfile is ignored and translation is\n"
-                             "made in place")
+                             "contain no syntax errors;\n"
+                             "if --outfile is not given, translation is\n"
+                             "made *in place*")
     parser.add_argument("-s", "--silent",
-                        help="Do not print summary for line numbers of\n"
+                        help="do not print summary for line numbers of\n"
                              "translated and rejected comments",
                         action="store_true")
     parser.add_argument("-n", "--drop-none",
@@ -715,11 +715,11 @@ def main() -> None:
                         "translation if it is annotated by a type comment",
                         action="store_true")
     parser.add_argument("-i", "--add-future-imports",
-                        help="Add 'from __future__ import annotations' to any file\n"
+                        help="add 'from __future__ import annotations' to any file\n"
                         "where type comments were successfully translated",
                         action="store_true")
     parser.add_argument("-w", "--wrap-signatures",
-                        help="Wrap function headers that are longer than given length",
+                        help="wrap function headers that are longer than given length",
                         type=int, default=0)
     parser.add_argument("-v", "--python-minor-version",
                         help="Python 3 minor version to use to parse the files",
@@ -737,12 +737,20 @@ def main() -> None:
     if os.path.isfile(args.infile):
         translate_file(args.infile, args.outfile, options)
     else:
+        if os.path.isfile(args.outfile):
+            print("If input is a directory, output must not be a file",
+                  file=sys.stderr)
+            exit(2)
         for root, _, files in os.walk(args.infile):
+            rel_root = os.path.relpath(root, args.infile)
+            out_root = os.path.join(args.outfile, rel_root)
+            os.makedirs(out_root, exist_ok=True)
             for file in files:
                 _, ext = os.path.splitext(file)
                 if ext == '.py' or ext == '.pyi':
                     file_name = os.path.join(root, file)
-                    translate_file(file_name, file_name, options)
+                    out_file_name = os.path.join(out_root, file)
+                    translate_file(file_name, out_file_name, options)
 
 
 if __name__ == '__main__':
