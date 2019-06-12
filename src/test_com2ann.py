@@ -486,6 +486,33 @@ class FunctionTestCase(BaseTestCase):
                 ...
             """)
 
+    def test_next_line_comment(self) -> None:
+        self.check(
+            """
+            def __init__(
+                self,
+                short,                # type: Short
+                long_argument,
+                # type: LongType[int, str]
+                other,                # type: Other
+            ):
+                # type: (...) -> None
+                '''
+                Some function.
+                '''
+            """,
+            """
+            def __init__(
+                self,
+                short: Short,
+                long_argument: LongType[int, str],
+                other: Other,
+            ) -> None:
+                '''
+                Some function.
+                '''
+            """)
+
 
 class LineReportingTestCase(BaseTestCase):
     def compare(self, code: str, success: List[int], fail: List[int]) -> None:
