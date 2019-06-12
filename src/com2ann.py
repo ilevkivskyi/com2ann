@@ -650,8 +650,14 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
     for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
         if re.search(TYPE_COM, lines[i]):
             lines[i] = strip_type_comment(lines[i])
-            if not lines[i].strip() and i > ret_line:
-                del lines[i]
+            if not lines[i].strip():
+                if i > ret_line:
+                    del lines[i]
+                else:
+                    # Removing an empty line in argument list is unsafe, since it
+                    # can cause shuffling of following line numbers.
+                    # TODO: fina a cleaner fix.
+                    lines[i] = ''
 
     # Inserting return type is a bit dirty...
     if func_type.ret_type:

@@ -486,7 +486,6 @@ class FunctionTestCase(BaseTestCase):
                 ...
             """)
 
-    @unittest.skip("Empty line remains after next-line argument comment")
     def test_next_line_comment(self) -> None:
         self.check(
             """
