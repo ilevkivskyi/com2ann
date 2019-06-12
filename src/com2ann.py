@@ -48,7 +48,7 @@ class Options:
     python_minor_version: int = -1
 
 
-class RvalueKind:
+class RvalueKind(Enum):
     """Special cases for assignment r.h.s."""
     OTHER = auto()
     TUPLE = auto()
