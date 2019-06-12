@@ -678,11 +678,11 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
                          add_future_imports=future_imports,
                          wrap_sig=options.wrap_signatures,
                          python_minor_version=options.python_minor_version)
-    except Exception as e:
-        print("INTERNAL ERROR:", str(e), file=sys.stderr)
+    except Exception:
+        print(f"INTERNAL ERROR while processing {infile}", file=sys.stderr)
         print("Please report bug at https://github.com/ilevkivskyi/com2ann/issues",
               file=sys.stderr)
-        return
+        raise
 
     if result is None:
         print("SyntaxError in", infile, file=sys.stderr)
