@@ -425,7 +425,6 @@ class FunctionTestCase(BaseTestCase):
                 pass
             """, False, False, 10)
 
-
     def test_decorator_body(self) -> None:
         self.check(
             """
