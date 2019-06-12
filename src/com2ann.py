@@ -198,11 +198,10 @@ class TypeCommentCollector(ast.NodeVisitor):
             # Number of non-default positional arguments.
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
 
-            # Number of non-default keyword-only arguments.
-            num_kw_non_defs = (len(fdef.args.kwonlyargs) -
-                               len([d for d in fdef.args.kw_defaults if d is not None]))
+            # Positions of non-default keyword-only arguments.
+            kw_non_defs = {i for i, d in enumerate(fdef.args.kw_defaults) if d is None}
 
-            args = self.process_per_arg_comments(fdef, num_non_defs, num_kw_non_defs)
+            args = self.process_per_arg_comments(fdef, num_non_defs, kw_non_defs)
 
             ret: Optional[str]
             if fdef.type_comment:
@@ -235,7 +234,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 self.found.append(FunctionData([], ret, fdef.lineno, body_start))
             else:
                 c_args = self.process_function_comment(fdef, f_args,
-                                                       num_non_defs, num_kw_non_defs)
+                                                       num_non_defs)
                 if c_args is None:
                     # There was an error processing comment.
                     return
@@ -244,7 +243,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
     def process_per_arg_comments(self, fdef: Function,
                                  num_non_defs: int,
-                                 num_kw_non_defs: int) -> List[ArgComment]:
+                                 kw_non_defs: Set[int]) -> List[ArgComment]:
         """Collect information about per-argument function comments.
 
         These comments look like:
@@ -275,7 +274,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 assert a.end_col_offset
                 args.append(ArgComment(a.type_comment,
                                        a.lineno, a.end_col_offset,
-                                       i >= num_kw_non_defs))
+                                       i not in kw_non_defs))
         if fdef.args.kwarg and fdef.args.kwarg.type_comment:
             kwarg = fdef.args.kwarg
             assert kwarg.end_col_offset
@@ -286,8 +285,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
     def process_function_comment(self, fdef: Function,
                                  f_args: List[str],
-                                 num_non_defs: int,
-                                 num_kw_non_defs: int) -> Optional[List[ArgComment]]:
+                                 num_non_defs: int) -> Optional[List[ArgComment]]:
         """Combine location data for function arguments with types from a comment.
 
         f_args contains already split argument strings from the function type comment,
@@ -330,7 +328,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 has_default = True
 
             kwonlyargs = fdef.args.kwonlyargs
-            if a in kwonlyargs and kwonlyargs.index(a) >= num_kw_non_defs:
+            if a in kwonlyargs and fdef.args.kw_defaults[kwonlyargs.index(a)]:
                 has_default = True
 
             assert a.end_col_offset
