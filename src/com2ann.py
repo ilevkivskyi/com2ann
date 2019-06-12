@@ -16,6 +16,7 @@ import sys
 import argparse
 import tokenize
 from tokenize import TokenInfo
+from enum import Enum, auto
 from collections import defaultdict
 from io import BytesIO
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ Function = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 @dataclass
 class Options:
+    """Config options, see details in main()."""
     drop_none: bool
     drop_ellipsis: bool
     silent: bool
@@ -46,21 +48,32 @@ class Options:
     python_minor_version: int = -1
 
 
+class RvalueKind:
+    """Special cases for assignment r.h.s."""
+    OTHER = auto()
+    TUPLE = auto()
+    NONE = auto()
+    ELLIPSIS = auto()
+
+
 @dataclass
 class AssignData:
+    """Location data for translating assignment type comment."""
     type_comment: str
 
+    # Position where l.h.s. ends (may not include closing paren).
     lvalue_end_line: int
     lvalue_end_offset: int
 
+    # Position range for the r.h.s. (may also not include parentheses
+    # if they are redundant).
     rvalue_start_line: int
     rvalue_start_offset: int
     rvalue_end_line: int
     rvalue_end_offset: int
 
-    tuple_rvalue: bool = False
-    none_rvalue: bool = False
-    ellipsis_rvalue: bool = False
+    # Is there any r.h.s. that requires special treatment.
+    rvalue_kind: RvalueKind = RvalueKind.OTHER
 
 
 @dataclass
@@ -122,9 +135,14 @@ class TypeCommentCollector(ast.NodeVisitor):
             target = s.targets[0]
             value = s.value
 
-            tuple_rvalue = isinstance(value, ast.Tuple)
-            none_rvalue = isinstance(value, ast.Constant) and value.value is None
-            ellipsis_rvalue = isinstance(value, ast.Constant) and value.value is Ellipsis
+            if isinstance(value, ast.Tuple):
+                rvalue_kind = RvalueKind.TUPLE
+            elif isinstance(value, ast.Constant) and value.value is None:
+                rvalue_kind = RvalueKind.NONE
+            elif isinstance(value, ast.Constant) and value.value is Ellipsis:
+                rvalue_kind = RvalueKind.ELLIPSIS
+            else:
+                rvalue_kind = RvalueKind.OTHER
 
             assert (target.end_lineno and target.end_col_offset and
                     value.end_lineno and value.end_col_offset)
@@ -132,7 +150,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                                target.end_lineno, target.end_col_offset,
                                value.lineno, value.col_offset,
                                value.end_lineno, value.end_col_offset,
-                               tuple_rvalue, none_rvalue, ellipsis_rvalue)
+                               rvalue_kind)
             self.found.append(found)
 
     def visit_For(self, o: ast.For) -> None:
@@ -394,7 +412,7 @@ def process_assign(comment: AssignData, data: FileData,
             assert trailer
             lines[rv_end] = lines[rv_end].rstrip()[:-1].rstrip() + trailer.group()
 
-    if comment.tuple_rvalue:
+    if comment.rvalue_kind == RvalueKind.TUPLE:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
         if not (lines[rv_start][comment.rvalue_start_offset] == '(' and
                 lines[rv_end][comment.rvalue_end_offset - 1] == ')'):
@@ -413,7 +431,8 @@ def process_assign(comment: AssignData, data: FileData,
                     if lines[i - 1].strip():
                         lines[i - 1] = ' ' + lines[i - 1]
 
-    elif comment.none_rvalue and drop_none or comment.ellipsis_rvalue and drop_ellipsis:
+    elif (comment.rvalue_kind == RvalueKind.NONE and drop_none or
+          comment.rvalue_kind == RvalueKind.ELLIPSIS and drop_ellipsis):
         # TODO: more tricky (multi-line) cases.
         assert comment.lvalue_end_line == comment.rvalue_end_line
         line = lines[comment.lvalue_end_line - 1]
