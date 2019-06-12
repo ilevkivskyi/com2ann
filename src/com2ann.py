@@ -78,8 +78,10 @@ class AssignData:
 
 @dataclass
 class ArgComment:
+    """Location data for insertion of an argument annotation."""
     type_comment: str
 
+    # Place where a given argument ends, insert an annotation here.
     arg_line: int
     arg_end_offset: int
 
@@ -88,10 +90,13 @@ class ArgComment:
 
 @dataclass
 class FunctionData:
+    """Location data for translating function comment."""
     arg_types: List[ArgComment]
     ret_type: Optional[str]
 
+    # The line where 'def' appears.
     header_start_line: int
+    # This doesn't include any comments or whitespace-only lines.
     body_first_line: int
 
 
@@ -121,10 +126,17 @@ class FileData:
 
 
 class TypeCommentCollector(ast.NodeVisitor):
+    """Visitor to collect type comments from an AST.
+
+    This also records other necessary information such as location data for
+    various nodes and their kinds.
+    """
     def __init__(self, silent: bool) -> None:
         super().__init__()
         self.silent = silent
+        # Type comments we can translate.
         self.found: List[Union[AssignData, FunctionData]] = []
+        # Type comments that are not supported yet (for reporting).
         self.found_unsupported: List[int] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
@@ -135,6 +147,7 @@ class TypeCommentCollector(ast.NodeVisitor):
             target = s.targets[0]
             value = s.value
 
+            # These may require special treatment.
             if isinstance(value, ast.Tuple):
                 rvalue_kind = RvalueKind.TUPLE
             elif isinstance(value, ast.Constant) and value.value is None:
@@ -181,7 +194,11 @@ class TypeCommentCollector(ast.NodeVisitor):
                 any(a.type_comment for a in fdef.args.kwonlyargs) or
                 fdef.args.vararg and fdef.args.vararg.type_comment or
                 fdef.args.kwarg and fdef.args.kwarg.type_comment):
+
+            # Number of non-default positional arguments.
             num_non_defs = len(fdef.args.args) - len(fdef.args.defaults)
+
+            # Number of non-default keyword-only arguments.
             num_kw_non_defs = (len(fdef.args.kwonlyargs) -
                                len([d for d in fdef.args.kw_defaults if d is not None]))
 
@@ -208,6 +225,8 @@ class TypeCommentCollector(ast.NodeVisitor):
             if isinstance(fdef.body[0], (ast.AsyncFunctionDef,
                                          ast.FunctionDef,
                                          ast.ClassDef)):
+                # We need to compensate for decorators, because the first line of a class/function
+                # is the line where 'class' or 'def' appears.
                 if fdef.body[0].decorator_list:
                     body_start = min(it.lineno for it in fdef.body[0].decorator_list)
             if args:
@@ -218,7 +237,7 @@ class TypeCommentCollector(ast.NodeVisitor):
                 c_args = self.process_function_comment(fdef, f_args,
                                                        num_non_defs, num_kw_non_defs)
                 if c_args is None:
-                    # There was an error.
+                    # There was an error processing comment.
                     return
                 self.found.append(FunctionData(c_args, ret, fdef.lineno, body_start))
         self.generic_visit(fdef)
@@ -226,6 +245,16 @@ class TypeCommentCollector(ast.NodeVisitor):
     def process_per_arg_comments(self, fdef: Function,
                                  num_non_defs: int,
                                  num_kw_non_defs: int) -> List[ArgComment]:
+        """Collect information about per-argument function comments.
+
+        These comments look like:
+
+            def func(
+                arg1,  # type: Type1
+                arg2,  # type: Type2
+            ):
+                ...
+        """
         args: List[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
@@ -259,6 +288,12 @@ class TypeCommentCollector(ast.NodeVisitor):
                                  f_args: List[str],
                                  num_non_defs: int,
                                  num_kw_non_defs: int) -> Optional[List[ArgComment]]:
+        """Combine location data for function arguments with types from a comment.
+
+        f_args contains already split argument strings from the function type comment,
+        for example if the comment is # type: (int, str) -> None, the f_args should be
+        ['int', 'str'].
+        """
         args: List[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
@@ -267,6 +302,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         if fdef.args.kwarg:
             tot_args += 1
 
+        # One is only allowed to skip annotation for self or cls.
         if len(f_args) not in (tot_args, tot_args - 1):
             if not self.silent:
                 print(f'Invalid number of arguments in comment for "{fdef.name}"',
@@ -274,17 +310,20 @@ class TypeCommentCollector(ast.NodeVisitor):
             self.found_unsupported.append(fdef.lineno)
             return None
 
+        # The list of arguments we need to annnotate.
         if len(f_args) == tot_args - 1:
             iter_args = fdef.args.args[1:]
         else:
             iter_args = fdef.args.args.copy()
 
+        # Extend the list with other possible arguments.
         if fdef.args.vararg:
             iter_args.append(fdef.args.vararg)
         iter_args.extend(fdef.args.kwonlyargs)
         if fdef.args.kwarg:
             iter_args.append(fdef.args.kwarg)
 
+        # Combine arguments locations with corresponding comments.
         for typ, a in zip(f_args, iter_args):
             has_default = False
             if a in fdef.args.args and fdef.args.args.index(a) >= num_non_defs:
@@ -322,6 +361,14 @@ def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
 
 def split_function_comment(comment: str,
                            silent: bool = False) -> Optional[Tuple[List[str], str]]:
+    """Split function type comment into argument types and return types.
+
+    This also removes any additional sub-comment. For example:
+
+        # type: (int, str) -> None  # some explanation
+
+    is transformed into: ['int', 'str'], 'None'.
+    """
     typ, _ = split_sub_comment(comment)
     if '->' not in typ:
         if not silent:
@@ -342,7 +389,6 @@ def split_function_comment(comment: str,
         return None
 
     arg_list = arg_list[1:-1]
-
     args: List[str] = []
 
     # TODO: use tokenizer to guard against Literal[','].
@@ -362,10 +408,17 @@ def split_function_comment(comment: str,
     if next_arg:
         args.append(next_arg.strip())
 
+    # Currently mypy just ignores * and ** and just gets the argument kind from the
+    # function header, so we don't need any additional checks.
     return [a.lstrip('*') for a in args if a != '...'], ret
 
 
 def strip_type_comment(line: str) -> str:
+    """Remove any type comments from this line.
+
+    We however keep # type: ignore comments, and any sub-comments.
+    This raises if there is no type comment found.
+    """
     match = re.search(TYPE_COM, line)
     assert match, line
     if match.group(1).lstrip().startswith('ignore'):
@@ -376,6 +429,7 @@ def strip_type_comment(line: str) -> str:
     typ = match.group(1)
     _, sub_comment = split_sub_comment(typ)
     if sub_comment is None:
+        # Just keep exactly the same kind of endline.
         trailer = re.search(_TRAILER, typ)
         assert trailer
         sub_comment = typ[trailer.start():]
@@ -394,6 +448,7 @@ def string_insert(line: str, extra: str, pos: int) -> str:
 
 def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
+    """Process type comment in an assignment statement."""
     lines = data.lines
 
     rv_end = comment.rvalue_end_line - 1
