@@ -448,30 +448,50 @@ def string_insert(line: str, extra: str, pos: int) -> str:
 
 def process_assign(comment: AssignData, data: FileData,
                    drop_none: bool, drop_ellipsis: bool) -> None:
-    """Process type comment in an assignment statement."""
+    """Process type comment in an assignment statement.
+
+    Remove the matching r.h.s. if drop_none or drop_ellipsis is True.
+    For example:
+
+        x = ...  # type: int
+
+    will be translated to
+
+        x: int
+    """
     lines = data.lines
 
+    # In ast module line numbers start from 1, not 0.
     rv_end = comment.rvalue_end_line - 1
     rv_start = comment.rvalue_start_line - 1
+
+    # We perform the tasks in order from larger line/columns to smaller ones
+    # to avoid shuffling the line column numbers in following code.
+    # First remove the type comment.
     if re.search(TYPE_COM, lines[rv_end]):
         lines[rv_end] = strip_type_comment(lines[rv_end])
     else:
         # Special case: type comment moved to a separate continuation line.
-        assert (lines[rv_end].rstrip().endswith('\\') or
-                lines[rv_end + 1].lstrip().startswith(')'))
+        # There two ways to have continuation...
+        assert (lines[rv_end].rstrip().endswith('\\') or  # ... a slash
+                lines[rv_end + 1].lstrip().startswith(')'))  # ... inside parentheses
+
         lines[rv_end + 1] = strip_type_comment(lines[rv_end + 1])
         if not lines[rv_end + 1].strip():
             del lines[rv_end + 1]
-            # Also remove the \ symbol from the previous line.
+            # Also remove the \ symbol from the previous line, but keep
+            # the original line ending.
             trailer = re.search(_TRAILER, lines[rv_end])
             assert trailer
             lines[rv_end] = lines[rv_end].rstrip()[:-1].rstrip() + trailer.group()
 
+    # Second we take care of r.h.s. special cases.
     if comment.rvalue_kind == RvalueKind.TUPLE:
         # TODO: take care of (1, 2), (3, 4) with matching pars.
         if not (lines[rv_start][comment.rvalue_start_offset] == '(' and
                 lines[rv_end][comment.rvalue_end_offset - 1] == ')'):
-            # We need to wrap rvalue in parentheses before Python 3.8.
+            # We need to wrap rvalue in parentheses before Python 3.8,
+            # because x: Tuple[int, ...] = 1, 2, 3 used to be a syntax error.
             end_line = lines[rv_end]
             lines[rv_end] = string_insert(end_line, ')',
                                           comment.rvalue_end_offset)
@@ -489,20 +509,20 @@ def process_assign(comment: AssignData, data: FileData,
     elif (comment.rvalue_kind == RvalueKind.NONE and drop_none or
           comment.rvalue_kind == RvalueKind.ELLIPSIS and drop_ellipsis):
         # TODO: more tricky (multi-line) cases.
-        assert comment.lvalue_end_line == comment.rvalue_end_line
-        line = lines[comment.lvalue_end_line - 1]
-        lines[comment.lvalue_end_line - 1] = (line[:comment.lvalue_end_offset] +
-                                              line[comment.rvalue_end_offset:])
+        if comment.lvalue_end_line == comment.rvalue_end_line:
+            line = lines[comment.lvalue_end_line - 1]
+            lines[comment.lvalue_end_line - 1] = (line[:comment.lvalue_end_offset] +
+                                                  line[comment.rvalue_end_offset:])
 
+    # Finally we insert the annotation.
     lvalue_line = lines[comment.lvalue_end_line - 1]
-
     typ, _ = split_sub_comment(comment.type_comment)
     data.seen.add(typ)
 
+    # Take care of '(foo) = bar  # type: baz'.
     # TODO: this is pretty ad hoc.
-    lv_line = lines[comment.lvalue_end_line - 1]
-    while (comment.lvalue_end_offset < len(lv_line) and
-           lv_line[comment.lvalue_end_offset] == ')'):
+    while (comment.lvalue_end_offset < len(lvalue_line) and
+           lvalue_line[comment.lvalue_end_offset] == ')'):
         comment.lvalue_end_offset += 1
 
     lines[comment.lvalue_end_line - 1] = (lvalue_line[:comment.lvalue_end_offset] +
@@ -511,6 +531,10 @@ def process_assign(comment: AssignData, data: FileData,
 
 
 def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
+    """Insert the argument type at a given location.
+
+    Also record the type we translated.
+    """
     typ, _ = split_sub_comment(arg.type_comment)
     seen.add(typ)
 
@@ -529,6 +553,20 @@ def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
 
 
 def wrap_function_header(header: str) -> List[str]:
+    """Wrap long function signature (header) one argument per line.
+
+    Currently only headers that are initially one-line are supported.
+    For example:
+
+        def foo(arg1: LongType1, arg2: LongType2) -> None:
+            ...
+
+    becomes
+
+        def foo(arg1: LongType1,
+                arg2: LongType2) -> None:
+            ...
+    """
     # TODO: use tokenizer to guard against Literal[','].
     parts: List[str] = []
     next_part = ''
@@ -544,6 +582,7 @@ def wrap_function_header(header: str) -> List[str]:
         if c in ')]}':
             nested -= 1
             if not nested:
+                # To avoid splitting return types that also have commas.
                 complete = True
         if c == ',' and nested == 1 and not complete:
             next_part += c
@@ -561,7 +600,7 @@ def wrap_function_header(header: str) -> List[str]:
     assert indent is not None
     parts = [parts[0]] + [' ' * indent + p.lstrip(' \t') for p in parts[1:]]
 
-    # Add end lines like in the original header.
+    # Add line endings like in the original header.
     trailer = re.search(_TRAILER, header)
     assert trailer
     end_line = header[trailer.start():].lstrip(' \t')
@@ -582,9 +621,21 @@ def wrap_function_header(header: str) -> List[str]:
 
 
 def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> None:
+    """Perform translation for an (async) function definition.
+
+    This supports two main ways of adding type comments for argument:
+
+        def one(
+            arg,  # type: Type
+        ):
+            ...
+
+        def another(arg):
+            # type: (Type) -> AnotherType
+    """
     lines = data.lines
 
-    # Find column where _actual_ colon is located.
+    # Find line and column where _actual_ colon is located.
     ret_line = func_type.body_first_line - 1
     ret_line -= 1
     while not lines[ret_line].split('#')[0].strip():
@@ -597,6 +648,7 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
             break
     assert colon is not None
 
+    # Note that -1 offset is because line numbers starts from 1 in ast module.
     for i in range(func_type.body_first_line - 2, func_type.header_start_line - 2, -1):
         if re.search(TYPE_COM, lines[i]):
             lines[i] = strip_type_comment(lines[i])
@@ -611,10 +663,12 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
                            ' -> ' + func_type.ret_type +
                            lines[ret_line][colon:])
 
+    # Inserting argument types is pretty straightforward.
     for arg in reversed(func_type.arg_types):
         lines[arg.arg_line - 1] = insert_arg_type(lines[arg.arg_line - 1], arg,
                                                   data.seen)
 
+    # Finally wrap the translated function header if needed.
     if ret_line == func_type.header_start_line - 1:
         header = data.lines[ret_line]
         if wrap_sig and len(header) > wrap_sig:
@@ -624,12 +678,18 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
 def com2ann_impl(data: FileData, drop_none: bool, drop_ellipsis: bool,
                  wrap_sig: int = 0, silent: bool = True,
                  add_future_imports: bool = False) -> str:
+    """Collect type annotations in AST and perform code translation.
+
+    Add the future import if necessary. Currently only type comments in
+    functions and simple assignments are supported.
+    """
     finder = TypeCommentCollector(silent)
     finder.visit(data.tree)
 
     data.fail.extend(finder.found_unsupported)
     found = list(reversed(finder.found))
 
+    # Perform translations in reverse order to avoid shuffling line numbers.
     for item in found:
         if isinstance(item, AssignData):
             process_assign(item, data, drop_none, drop_ellipsis)
