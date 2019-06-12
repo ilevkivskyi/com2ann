@@ -225,8 +225,8 @@ class TypeCommentCollector(ast.NodeVisitor):
             if isinstance(fdef.body[0], (ast.AsyncFunctionDef,
                                          ast.FunctionDef,
                                          ast.ClassDef)):
-                # We need to compensate for decorators, because the first line of a class/function
-                # is the line where 'class' or 'def' appears.
+                # We need to compensate for decorators, because the first line of a
+                # class/function is the line where 'class' or 'def' appears.
                 if fdef.body[0].decorator_list:
                     body_start = min(it.lineno for it in fdef.body[0].decorator_list)
             if args:
