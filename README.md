@@ -4,7 +4,7 @@ com2ann
 [![Build Status](https://travis-ci.org/ilevkivskyi/com2ann.svg)](https://travis-ci.org/ilevkivskyi/com2ann)
 [![Checked with mypy](http://www.mypy-lang.org/static/mypy_badge.svg)](http://mypy-lang.org/)
 
-Tool for translation type comments to type annotations in Python.
+Tool for translation of type comments to type annotations in Python.
 
 The tool requires Python 3.8 to run. But the supported target code version
 is Python 3.4+ (can be specified with `--python-minor-version`).

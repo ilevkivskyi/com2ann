@@ -229,6 +229,22 @@ class AssignTestCase(BaseTestCase):
             )
             """)
 
+    def test_with_for(self) -> None:
+        self.check(
+            """
+            for i in range(test):  # type: float
+                with open('/some/file'):
+                    def f():
+                        # type: () -> None
+                        x = []  # type: List[int]  # unused
+            """,
+            """
+            for i in range(test):  # type: float
+                with open('/some/file'):
+                    def f() -> None:
+                        x: List[int] = []  # unused
+            """)
+
 
 class FunctionTestCase(BaseTestCase):
     def test_single(self) -> None:

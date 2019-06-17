@@ -7,15 +7,15 @@ if sys.version_info < (3, 8, 0):
     sys.stderr.write("ERROR: You need Python 3.8 or later to use com2ann.\n")
     exit(1)
 
-version = '0.1.0'
+version = '0.1.1'
 description = 'Tool to translate type comments to annotations.'
 long_description = '''
 com2ann
 =======
 
-Tool for translation type comments to type annotations in Python.
+Tool for translation of type comments to type annotations in Python.
 
-The tool requires Python 3.8 to run. But the supported target code version
+This tool requires Python 3.8 to run. But the supported target code version
 is Python 3.4+ (can be specified with ``--python-minor-version``).
 
 Currently, the tool translates function and assignment type comments to

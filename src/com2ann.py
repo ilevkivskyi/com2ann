@@ -181,6 +181,7 @@ class TypeCommentCollector(ast.NodeVisitor):
     def visit_unsupported(self, o: Unsupported) -> None:
         if o.type_comment:
             self.found_unsupported.append(o.lineno)
+        self.generic_visit(o)
 
     def visit_FunctionDef(self, fdef: ast.FunctionDef) -> None:
         self.visit_function_impl(fdef)
