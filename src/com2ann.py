@@ -29,7 +29,7 @@ TYPE_COM = re.compile(r'\s*#\s*type\s*:(.*)$', flags=re.DOTALL)
 
 # For internal use only.
 _TRAILER = re.compile(r'\s*$', flags=re.DOTALL)
-_NICE_IGNORE = re.compile(r'\s*# type: ignore\s*$', flags=re.DOTALL)
+_NICE_IGNORE = re.compile(r'\s*# type: ignore(\[\S+\])?\s*$', flags=re.DOTALL)
 
 FUTURE_IMPORT_WHITELIST = {'str', 'int', 'bool', 'None'}
 
