@@ -23,7 +23,7 @@ class Template:
         # type (str, **bool) -> str
         ...
 ```
-will be translated into:
+will be translated to:
 ```python
 from typing import Optional, Final
 
@@ -36,7 +36,7 @@ class Template:
         ...
 ```
 
-The philosophy of of the tool is too minimally invasive, and preserve original
+The philosophy of the tool is to be minimally invasive, and preserve original
 formatting as much as possible. This is why the tool doesn't use un-parse.
 
 The only (optional) formatting code modification is wrapping long function
@@ -51,13 +51,13 @@ The signatures are wrapped one argument per line (after each comma), for example
 
 For working with stubs, there are two additional options for assignments:
 `--drop-ellipsis` and `--drop-none`. They will result in omitting the redundant
-r.h.s. For example, this:
+right hand sides. For example, this:
 ```python
 var = ...  # type: List[int]
 class Test:
     attr = None  # type: str
 ```
-will be translated with such options into:
+will be translated with such options to:
 ```python
 var: List[int]
 class Test:
