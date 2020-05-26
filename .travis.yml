@@ -14,8 +14,12 @@ jobs:
       python: 3.7
       script: mypy --python-version=3.8 src/com2ann.py src/test_com2ann.py
 
-    - name: "Run tests"
-      python: 3.8-dev
+    - name: "Run tests on Python 3.8"
+      python: 3.8
+      script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
+
+    - name: "Run tests on Python 3.9 (beta)"
+      python: 3.9-dev
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
 install:
