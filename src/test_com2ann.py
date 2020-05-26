@@ -441,6 +441,21 @@ class FunctionTestCase(BaseTestCase):
                 pass
             """, False, False, 10)
 
+    def test_wrap_lines_error_code(self) -> None:
+        self.check(
+            """
+            def embezzle(self, account, funds=MANY, *fake_receipts):  # type: ignore[override]
+                # type: (str, int, *str) -> None
+                pass
+            """,
+            """
+            def embezzle(self,  # type: ignore[override]
+                         account: str,
+                         funds: int = MANY,
+                         *fake_receipts: str) -> None:
+                pass
+            """, False, False, 10)
+
     def test_decorator_body(self) -> None:
         self.check(
             """
