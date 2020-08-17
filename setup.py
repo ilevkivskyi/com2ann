@@ -7,7 +7,7 @@ if sys.version_info < (3, 8, 0):
     sys.stderr.write("ERROR: You need Python 3.8 or later to use com2ann.\n")
     exit(1)
 
-version = '0.1.1'
+version = '0.2.0'
 description = 'Tool to translate type comments to annotations.'
 long_description = '''
 com2ann
@@ -46,6 +46,7 @@ setup(
     license='MIT',
     keywords='typing function annotations type hints '
              'type comments variable annotations',
+    python_requires=">=3.8",
     package_dir={'': 'src'},
     py_modules=['com2ann'],
     entry_points={'console_scripts': ['com2ann=com2ann:main']},
