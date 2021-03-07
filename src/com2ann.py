@@ -467,7 +467,8 @@ def process_assign(comment: AssignData, data: FileData,
     # We perform the tasks in order from larger line/columns to smaller ones
     # to avoid shuffling the line column numbers in following code.
     # First remove the type comment.
-    if re.search(TYPE_COM, lines[rv_end]):
+    match = re.search(TYPE_COM, lines[rv_end])
+    if match and not match.group(1).lstrip().startswith('ignore'):
         lines[rv_end] = strip_type_comment(lines[rv_end])
     else:
         # Special case: type comment moved to a separate continuation line.
