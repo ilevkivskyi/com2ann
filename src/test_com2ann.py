@@ -228,6 +228,23 @@ class AssignTestCase(BaseTestCase):
                 | {other}
             )
             """)
+        self.check(
+            """
+            foo = object()
+
+            bar = (
+                # Comment which explains why this ignored
+                foo.quox   # type: ignore[attribute]
+            )  # type: Mapping[str, Distribution]
+            """,
+            """
+            foo = object()
+
+            bar: Mapping[str, Distribution] = (
+                # Comment which explains why this ignored
+                foo.quox   # type: ignore[attribute]
+            )
+            """)
 
     def test_with_for(self) -> None:
         self.check(
