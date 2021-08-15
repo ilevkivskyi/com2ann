@@ -8,7 +8,7 @@ jobs:
       - uses: actions/setup-python@v2
       - run: pip install --upgrade pip wheel
       - run: pip install bandit black codespell flake8 isort mypy pytest pyupgrade safety
-      - run: bandit --recursive .
+      - run: bandit --recursive --skip B101 .  # B101 is assert statements
       - run: black --check . || true
       - run: codespell --ignore-words-list="fo"
       - run: flake8 . --count --max-complexity=12 --max-line-length=89 --show-source --statistics
