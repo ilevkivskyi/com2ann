@@ -1,6 +1,4 @@
-sudo: false
 language: python
-dist: xenial
 
 jobs:
   include:
@@ -18,8 +16,12 @@ jobs:
       python: 3.8
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
-    - name: "Run tests on Python 3.9 (beta)"
-      python: 3.9-dev
+    - name: "Run tests on Python 3.9"
+      python: 3.9
+      script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
+
+    - name: "Run tests on Python 3.10 (beta)"
+      python: 3.10-dev
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
 install:
