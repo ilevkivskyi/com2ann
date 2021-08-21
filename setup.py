@@ -7,7 +7,7 @@ if sys.version_info < (3, 8, 0):
     sys.stderr.write("ERROR: You need Python 3.8 or later to use com2ann.\n")
     exit(1)
 
-version = '0.2.0'
+version = '0.3.0'
 description = 'Tool to translate type comments to annotations.'
 long_description = '''
 com2ann
