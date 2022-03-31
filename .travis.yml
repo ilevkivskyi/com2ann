@@ -1,4 +1,7 @@
+os: linux
+dist: focal
 language: python
+
 
 jobs:
   include:
@@ -20,8 +23,8 @@ jobs:
       python: 3.9
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
-    - name: "Run tests on Python 3.10 (beta)"
-      python: "3.10"  # MUST be "quoted" in YAML
+    - name: "Run tests on Python 3.10.2"
+      python: 3.10.2
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
     - name: "Run tests on Python 3.11 (alpha)"
