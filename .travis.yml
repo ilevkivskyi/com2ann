@@ -24,7 +24,7 @@ jobs:
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
     - name: "Run tests on Python 3.10.2"
-      python: 3.10
+      python: "3.10"
       script: export PYTHONPATH="src"; python -m unittest src/test_com2ann.py
 
     - name: "Run tests on Python 3.11 (alpha)"
