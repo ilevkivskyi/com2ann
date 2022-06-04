@@ -873,6 +873,10 @@ def main() -> None:
               file=sys.stderr)
         exit(2)
 
+    if not args.infile:
+        print("No input file, exiting.", file=sys.stderr)
+        exit()
+
     options = Options(args.drop_none, args.drop_ellipsis,
                       args.silent, args.add_future_imports,
                       args.wrap_signatures,
