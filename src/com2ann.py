@@ -836,12 +836,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--outfile",
                         help="output file or directory, will be overwritten if exists,\n"
-                             "defaults to input file or directory")
+                             "defaults to input file or directory. Cannot be used\n"
+                             "when multiple input files are defined")
     parser.add_argument("infile",
+                        nargs="*",
                         help="input file or directory for translation, must\n"
                              "contain no syntax errors;\n"
-                             "if --outfile is not given, translation is\n"
-                             "made *in place*")
+                             "if --outfile is not given or multiple input files are\n"
+                             "given, translation is made *in place*")
     parser.add_argument("-s", "--silent",
                         help="do not print summary for line numbers of\n"
                              "translated and rejected comments",
@@ -866,31 +868,35 @@ def main() -> None:
                         type=int, default=-1)
 
     args = parser.parse_args()
-    if args.outfile is None:
-        args.outfile = args.infile
+    if len(args.infile) > 1 and args.outfile is not None:
+        print("Cannot use --outfile if multiple infiles are given",
+              file=sys.stderr)
+        exit(2)
 
     options = Options(args.drop_none, args.drop_ellipsis,
                       args.silent, args.add_future_imports,
                       args.wrap_signatures,
                       args.python_minor_version)
 
-    if os.path.isfile(args.infile):
-        translate_file(args.infile, args.outfile, options)
-    else:
-        if os.path.isfile(args.outfile):
-            print("If input is a directory, output must not be a file",
-                  file=sys.stderr)
-            exit(2)
-        for root, _, files in os.walk(args.infile):
-            rel_root = os.path.relpath(root, args.infile)
-            out_root = os.path.join(args.outfile, rel_root)
-            os.makedirs(out_root, exist_ok=True)
-            for file in files:
-                _, ext = os.path.splitext(file)
-                if ext == '.py' or ext == '.pyi':
-                    file_name = os.path.join(root, file)
-                    out_file_name = os.path.join(out_root, file)
-                    translate_file(file_name, out_file_name, options)
+    for infile in args.infile:
+        outfile = args.outfile or infile
+        if os.path.isfile(infile):
+            translate_file(infile, outfile, options)
+        else:
+            if args.outfile and os.path.isfile(args.outfile):
+                print("If input is a directory, output must not be a file",
+                      file=sys.stderr)
+                exit(2)
+            for root, _, files in os.walk(infile):
+                rel_root = os.path.relpath(root, infile)
+                out_root = os.path.join(outfile, rel_root)
+                os.makedirs(out_root, exist_ok=True)
+                for file in files:
+                    _, ext = os.path.splitext(file)
+                    if ext == '.py' or ext == '.pyi':
+                        file_name = os.path.join(root, file)
+                        out_file_name = os.path.join(out_root, file)
+                        translate_file(file_name, out_file_name, options)
 
 
 if __name__ == '__main__':
