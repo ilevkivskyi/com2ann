@@ -770,7 +770,7 @@ def com2ann(code: str, *,
         # We want to work only with file without syntax errors
         tree = ast.parse(code,
                          type_comments=True,
-                         feature_version=python_minor_version)
+                         feature_version=(3, python_minor_version))
     except SyntaxError:
         return None
     lines = code.splitlines(keepends=True)
