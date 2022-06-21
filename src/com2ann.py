@@ -9,19 +9,18 @@ We are especially careful about assignment statements, and keep the placement
 of additional (non-type) comments. For function definitions, we might introduce
 some formatting modifications, if the original formatting was too tricky.
 """
-import re
-import os
-import ast
-import sys
 import argparse
+import ast
+import os
+import re
+import sys
 import tokenize
-from tokenize import TokenInfo
-from enum import Enum, auto
 from collections import defaultdict
-from io import BytesIO
 from dataclasses import dataclass
-
-from typing import List, DefaultDict, Tuple, Optional, Union, Set
+from enum import Enum, auto
+from io import BytesIO
+from tokenize import TokenInfo
+from typing import DefaultDict, List, Optional, Set, Tuple, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
