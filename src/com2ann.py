@@ -11,7 +11,7 @@ some formatting modifications, if the original formatting was too tricky.
 """
 import argparse
 import ast
-import os
+import pathlib
 import re
 import sys
 import tokenize
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from io import BytesIO
 from tokenize import TokenInfo
-from typing import DefaultDict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -831,75 +831,109 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         fo.write(new_code.encode(enc))
 
 
-def main() -> None:
+def parse_cli_args(args: Optional[List[str]] = None) -> Dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--outfile",
-                        help="output file or directory, will be overwritten if exists,\n"
-                             "defaults to input file or directory. Cannot be used\n"
-                             "when multiple input files are defined")
     parser.add_argument("infile",
                         nargs="*",
+                        type=pathlib.Path,
                         help="input file or directory for translation, must\n"
                              "contain no syntax errors;\n"
                              "if --outfile is not given or multiple input files are\n"
                              "given, translation is made *in place*")
+
+    parser.add_argument("-o", "--outfile",
+                        type=pathlib.Path,
+                        help="output file or directory, will be overwritten if exists,\n"
+                             "defaults to input file or directory. Cannot be used\n"
+                             "when multiple input files are defined. infile and\n"
+                             "outfile must be of the same type (file vs. directory)")
+
     parser.add_argument("-s", "--silent",
                         help="do not print summary for line numbers of\n"
                              "translated and rejected comments",
                         action="store_true")
+
     parser.add_argument("-n", "--drop-none",
                         help="drop any None as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+
     parser.add_argument("-e", "--drop-ellipsis",
                         help="drop any Ellipsis (...) as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+
     parser.add_argument("-i", "--add-future-imports",
                         help="add 'from __future__ import annotations' to any file\n"
                         "where type comments were successfully translated",
                         action="store_true")
+
     parser.add_argument("-w", "--wrap-signatures",
                         help="wrap function headers that are longer than given length",
                         type=int, default=0)
+
     parser.add_argument("-v", "--python-minor-version",
                         help="Python 3 minor version to use to parse the files",
                         type=int, default=-1)
 
-    args = parser.parse_args()
-    if len(args.infile) > 1 and args.outfile is not None:
-        print("Cannot use --outfile if multiple infiles are given",
-              file=sys.stderr)
-        exit(2)
+    options = parser.parse_args(args)
 
-    if not args.infile:
-        print("No input file, exiting.", file=sys.stderr)
-        exit()
+    infile = options.infile  # type: List[pathlib.Path]
+    outfile = options.outfile  # type: Optional[pathlib.Path]
 
-    options = Options(args.drop_none, args.drop_ellipsis,
-                      args.silent, args.add_future_imports,
-                      args.wrap_signatures,
-                      args.python_minor_version)
+    if not infile:
+        parser.exit(status=0, message="No input file, exiting")
 
-    for infile in args.infile:
-        outfile = args.outfile or infile
-        if os.path.isfile(infile):
-            translate_file(infile, outfile, options)
-        else:
-            if args.outfile and os.path.isfile(args.outfile):
-                print("If input is a directory, output must not be a file",
-                      file=sys.stderr)
-                exit(2)
-            for root, _, files in os.walk(infile):
-                rel_root = os.path.relpath(root, infile)
-                out_root = os.path.join(outfile, rel_root)
-                os.makedirs(out_root, exist_ok=True)
-                for file in files:
-                    _, ext = os.path.splitext(file)
-                    if ext == '.py' or ext == '.pyi':
-                        file_name = os.path.join(root, file)
-                        out_file_name = os.path.join(out_root, file)
-                        translate_file(file_name, out_file_name, options)
+    missing_files = [file for file in infile if not file.exists()]
+    if missing_files:
+        parser.error(f"File(s) not found: {', '.join(str(e) for e in missing_files)}")
+
+    if len(infile) == 1:
+        if outfile and outfile.exists() and infile[0].is_dir() != outfile.is_dir():
+            parser.error("Infile must be the same type as outfile (file vs. directory)")
+    else:
+        if outfile is not None:
+            parser.error("Cannot use --outfile if multiple infiles are given")
+
+    return vars(options)
+
+
+def rebase_path(path: pathlib.Path, root: pathlib.Path, new_root: pathlib.Path):
+    """
+    Generate a path that is at the same location relative to `new_root` as `path`
+    was relative to `root`
+    """
+    return new_root / path.relative_to(root)
+
+
+def process_single_entry(
+    in_path: pathlib.Path, out_path: pathlib.Path, options: Options
+) -> None:
+
+    if in_path.is_file():
+        translate_file(infile=str(in_path), outfile=str(out_path), options=options)
+    else:
+        for in_file in sorted(in_path.glob("**/*.py*")):
+            if in_file.suffix not in [".py", ".pyi"]:
+                continue
+
+            out_file = rebase_path(path=in_file, root=in_path, new_root=out_path)
+            if out_file != in_file:
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            translate_file(infile=str(in_file), outfile=str(out_file), options=options)
+
+
+def main() -> None:
+    args = parse_cli_args()
+
+    infiles = args.pop("infile")
+    outfile = args.pop("outfile")
+    options = Options(**args)
+
+    for infile in infiles:
+        outfile = outfile or infile
+        process_single_entry(in_path=infile, out_path=outfile, options=options)
 
 
 if __name__ == '__main__':
