@@ -898,7 +898,9 @@ def parse_cli_args(args: Optional[List[str]] = None) -> Dict[str, Any]:
     return vars(options)
 
 
-def rebase_path(path: pathlib.Path, root: pathlib.Path, new_root: pathlib.Path):
+def rebase_path(
+    path: pathlib.Path, root: pathlib.Path, new_root: pathlib.Path
+) -> pathlib.Path:
     """
     Generate a path that is at the same location relative to `new_root` as `path`
     was relative to `root`
