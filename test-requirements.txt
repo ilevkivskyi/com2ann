@@ -1,8 +1,14 @@
+bandit
+black
+codespell
 flake8
 flake8-bugbear
 flake8-pyi
-pytest>=2.8
-pytest-xdist>=1.13
-pytest-cov>=2.4.0
+isort
+mypy
+pytest
 pytest-cov>=2.4.0
 pytest-mock>=3.7.0
+pytest-xdist>=1.13
+pyupgrade
+safety
