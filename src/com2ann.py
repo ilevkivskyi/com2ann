@@ -916,7 +916,7 @@ def process_single_entry(
         translate_file(infile=str(in_path), outfile=str(out_path), options=options)
     else:
         for in_file in sorted(in_path.glob("**/*.py*")):
-            if in_file.suffix not in [".py", ".pyi"]:
+            if in_file.suffix not in [".py", ".pyi"] or in_file.is_dir():
                 continue
 
             out_file = rebase_path(path=in_file, root=in_path, new_root=out_path)
