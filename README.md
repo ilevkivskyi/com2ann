@@ -20,7 +20,7 @@ class Template:
     default = None  # type: Optional[str]
 
     def apply(self, value, **opts):
-        # type (str, **bool) -> str
+        # type: (str, **bool) -> str
         ...
 ```
 will be translated to:
