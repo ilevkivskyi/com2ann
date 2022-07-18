@@ -63,3 +63,44 @@ var: List[int]
 class Test:
     attr: str
 ```
+### Usage
+$ `com2ann --help`
+```
+usage: com2ann [-h] [-o OUTFILE] [-s] [-n] [-e] [-i] [-w WRAP_SIGNATURES]
+               [-v PYTHON_MINOR_VERSION]
+               infile
+
+Helper module to translate type comments to type annotations. The key idea of
+this module is to perform the translation while preserving the original
+formatting as much as possible. We try to be not opinionated about code
+formatting and therefore work at the source code and tokenizer level instead
+of modifying AST and using un-parse. We are especially careful about
+assignment statements, and keep the placement of additional (non-type)
+comments. For function definitions, we might introduce some formatting
+modifications, if the original formatting was too tricky.
+
+positional arguments:
+  infile                input file or directory for translation, must contain
+                        no syntax errors; if --outfile is not given,
+                        translation is made *in place*
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -o OUTFILE, --outfile OUTFILE
+                        output file or directory, will be overwritten if
+                        exists, defaults to input file or directory
+  -s, --silent          do not print summary for line numbers of translated
+                        and rejected comments
+  -n, --drop-none       drop any None as assignment value during translation
+                        if it is annotated by a type comment
+  -e, --drop-ellipsis   drop any Ellipsis (...) as assignment value during
+                        translation if it is annotated by a type comment
+  -i, --add-future-imports
+                        add 'from __future__ import annotations' to any file
+                        where type comments were successfully translated
+  -w WRAP_SIGNATURES, --wrap-signatures WRAP_SIGNATURES
+                        wrap function headers that are longer than given
+                        length
+  -v PYTHON_MINOR_VERSION, --python-minor-version PYTHON_MINOR_VERSION
+                        Python 3 minor version to use to parse the files
+```
