@@ -9,6 +9,8 @@ We are especially careful about assignment statements, and keep the placement
 of additional (non-type) comments. For function definitions, we might introduce
 some formatting modifications, if the original formatting was too tricky.
 """
+from __future__ import annotations
+
 import argparse
 import ast
 import pathlib
@@ -20,8 +22,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from io import BytesIO
 from tokenize import TokenInfo
-from typing import (Any, DefaultDict, Dict, List, Optional, Sequence, Set,
-                    Tuple, Union)
+from typing import Any, DefaultDict, List, Optional, Sequence, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -91,8 +92,8 @@ class ArgComment:
 @dataclass
 class FunctionData:
     """Location data for translating function comment."""
-    arg_types: List[ArgComment]
-    ret_type: Optional[str]
+    arg_types: list[ArgComment]
+    ret_type: str | None
 
     # The line where 'def' appears.
     header_start_line: int
@@ -102,7 +103,7 @@ class FunctionData:
 
 class FileData:
     """Internal class describing global data on file."""
-    def __init__(self, lines: List[str], tokens: List[TokenInfo], tree: ast.AST) -> None:
+    def __init__(self, lines: list[str], tokens: list[TokenInfo], tree: ast.AST) -> None:
         # Source code lines.
         self.lines = lines
         # Tokens for the source code.
@@ -112,17 +113,17 @@ class FileData:
 
         # Map line number to token numbers. For example {1: [0, 1, 2, 3], 2: [4, 5]}
         # means that first to fourth tokens are on the first line.
-        token_tab: DefaultDict[int, List[int]] = defaultdict(list)
+        token_tab: DefaultDict[int, list[int]] = defaultdict(list)
         for i, tok in enumerate(tokens):
             token_tab[tok.start[0]].append(i)
         self.token_tab = token_tab
 
         # Basic translation logging.
-        self.success: List[int] = []  # list of lines where type comments where processed
-        self.fail: List[int] = []  # list of lines where type comments where rejected
+        self.success: list[int] = []  # list of lines where type comments where processed
+        self.fail: list[int] = []  # list of lines where type comments where rejected
 
         # Types we have inserted during translation.
-        self.seen: Set[str] = set()
+        self.seen: set[str] = set()
 
 
 class TypeCommentCollector(ast.NodeVisitor):
@@ -135,9 +136,9 @@ class TypeCommentCollector(ast.NodeVisitor):
         super().__init__()
         self.silent = silent
         # Type comments we can translate.
-        self.found: List[Union[AssignData, FunctionData]] = []
+        self.found: list[AssignData | FunctionData] = []
         # Type comments that are not supported yet (for reporting).
-        self.found_unsupported: List[int] = []
+        self.found_unsupported: list[int] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
         if s.type_comment:
@@ -204,7 +205,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
             args = self.process_per_arg_comments(fdef, num_non_defs, kw_non_defs)
 
-            ret: Optional[str]
+            ret: str | None
             if fdef.type_comment:
                 res = split_function_comment(fdef.type_comment, self.silent)
                 if not res:
@@ -244,7 +245,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
     def process_per_arg_comments(self, fdef: Function,
                                  num_non_defs: int,
-                                 kw_non_defs: Set[int]) -> List[ArgComment]:
+                                 kw_non_defs: set[int]) -> list[ArgComment]:
         """Collect information about per-argument function comments.
 
         These comments look like:
@@ -255,7 +256,7 @@ class TypeCommentCollector(ast.NodeVisitor):
             ):
                 ...
         """
-        args: List[ArgComment] = []
+        args: list[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
             if a.type_comment:
@@ -285,15 +286,15 @@ class TypeCommentCollector(ast.NodeVisitor):
         return args
 
     def process_function_comment(self, fdef: Function,
-                                 f_args: List[str],
-                                 num_non_defs: int) -> Optional[List[ArgComment]]:
+                                 f_args: list[str],
+                                 num_non_defs: int) -> list[ArgComment] | None:
         """Combine location data for function arguments with types from a comment.
 
         f_args contains already split argument strings from the function type comment,
         for example if the comment is # type: (int, str) -> None, the f_args should be
         ['int', 'str'].
         """
-        args: List[ArgComment] = []
+        args: list[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
         if fdef.args.vararg:
@@ -339,7 +340,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         return args
 
 
-def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
+def split_sub_comment(comment: str) -> tuple[str, str | None]:
     """Split extra comment from a type comment.
 
     The only non-trivial thing here is to take care of literal types,
@@ -359,7 +360,7 @@ def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
 
 
 def split_function_comment(comment: str,
-                           silent: bool = False) -> Optional[Tuple[List[str], str]]:
+                           silent: bool = False) -> tuple[list[str], str] | None:
     """Split function type comment into argument types and return types.
 
     This also removes any additional sub-comment. For example:
@@ -388,7 +389,7 @@ def split_function_comment(comment: str,
         return None
 
     arg_list = arg_list[1:-1]
-    args: List[str] = []
+    args: list[str] = []
 
     # TODO: use tokenizer to guard against Literal[','].
     next_arg = ''
@@ -530,7 +531,7 @@ def process_assign(comment: AssignData, data: FileData,
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
-def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
+def insert_arg_type(line: str, arg: ArgComment, seen: set[str]) -> str:
     """Insert the argument type at a given location.
 
     Also record the type we translated.
@@ -552,7 +553,7 @@ def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
     return new_line + ' = ' + rest
 
 
-def wrap_function_header(header: str) -> List[str]:
+def wrap_function_header(header: str) -> list[str]:
     """Wrap long function signature (header) one argument per line.
 
     Currently only headers that are initially one-line are supported.
@@ -568,11 +569,11 @@ def wrap_function_header(header: str) -> List[str]:
             ...
     """
     # TODO: use tokenizer to guard against Literal[','].
-    parts: List[str] = []
+    parts: list[str] = []
     next_part = ''
     nested = 0
     complete = False  # Did we split all the arguments inside (...)?
-    indent: Optional[int] = None
+    indent: int | None = None
 
     for i, c in enumerate(header):
         if c in '([{':
@@ -740,7 +741,7 @@ def com2ann(code: str, *,
             silent: bool = False,
             add_future_imports: bool = False,
             wrap_sig: int = 0,
-            python_minor_version: int = -1) -> Optional[Tuple[str, FileData]]:
+            python_minor_version: int = -1) -> tuple[str, FileData] | None:
     """Translate type comments to type annotations in code.
 
     Take code as string and return this string where::
@@ -832,7 +833,7 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         fo.write(new_code.encode(enc))
 
 
-def parse_cli_args(args: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+def parse_cli_args(args: Sequence[str] | None = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("infile",
                         nargs="*",

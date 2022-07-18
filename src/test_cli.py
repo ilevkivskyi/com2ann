@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import os
 import pathlib
-from typing import Any, Callable, Dict, Iterable, TypedDict
+from typing import Any, Callable, Iterable, TypedDict
 
 import pytest
 
@@ -21,7 +23,7 @@ class Exited(Exception):
 
 class ParseResult(TypedDict, total=False):
     status: int
-    args: Dict[str, Any]
+    args: dict[str, Any]
     error: bool
     out: str
     err: str
