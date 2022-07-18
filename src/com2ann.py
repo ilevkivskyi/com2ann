@@ -835,10 +835,10 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
 
 def parse_cli_args(args: Sequence[str] | None = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("infile",
+    parser.add_argument("infiles",
                         nargs="*",
                         type=pathlib.Path,
-                        help="input file or directory for translation, must\n"
+                        help="input files or directories for translation, must\n"
                              "contain no syntax errors;\n"
                              "if --outfile is not given or multiple input files are\n"
                              "given, translation is made *in place*")
@@ -847,7 +847,7 @@ def parse_cli_args(args: Sequence[str] | None = None) -> dict[str, Any]:
                         type=pathlib.Path,
                         help="output file or directory, will be overwritten if exists,\n"
                              "defaults to input file or directory. Cannot be used\n"
-                             "when multiple input files are defined. infile and\n"
+                             "when multiple input files are defined. infiles and\n"
                              "outfile must be of the same type (file vs. directory)")
 
     parser.add_argument("-s", "--silent",
@@ -880,18 +880,18 @@ def parse_cli_args(args: Sequence[str] | None = None) -> dict[str, Any]:
 
     options = parser.parse_args(args)
 
-    infile = options.infile  # type: List[pathlib.Path]
-    outfile = options.outfile  # type: Optional[pathlib.Path]
+    infiles: list[pathlib.Path] = options.infiles
+    outfile: pathlib.Path | None = options.outfile
 
-    if not infile:
+    if not infiles:
         parser.exit(status=0, message="No input file, exiting")
 
-    missing_files = [file for file in infile if not file.exists()]
+    missing_files = [file for file in infiles if not file.exists()]
     if missing_files:
         parser.error(f"File(s) not found: {', '.join(str(e) for e in missing_files)}")
 
-    if len(infile) == 1:
-        if outfile and outfile.exists() and infile[0].is_dir() != outfile.is_dir():
+    if len(infiles) == 1:
+        if outfile and outfile.exists() and infiles[0].is_dir() != outfile.is_dir():
             parser.error("Infile must be the same type as outfile (file vs. directory)")
     else:
         if outfile is not None:
@@ -931,7 +931,7 @@ def process_single_entry(
 def main() -> None:
     args = parse_cli_args()
 
-    infiles = args.pop("infile")
+    infiles = args.pop("infiles")
     outfile = args.pop("outfile")
     options = Options(**args)
 
