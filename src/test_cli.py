@@ -1,5 +1,6 @@
 import os
 import pathlib
+from typing import Any, Callable, Dict, Iterable, TypedDict
 
 import pytest
 
@@ -7,7 +8,7 @@ import com2ann
 
 
 @pytest.fixture
-def test_path(tmp_path):
+def test_path(tmp_path: pathlib.Path) -> Iterable[pathlib.Path]:
     old_path = pathlib.Path.cwd()
     os.chdir(tmp_path)
     yield tmp_path
@@ -18,8 +19,21 @@ class Exited(Exception):
     pass
 
 
+class ParseResult(TypedDict, total=False):
+    status: int
+    args: Dict[str, Any]
+    error: bool
+    out: str
+    err: str
+
+
+ParseCallable = Callable[..., ParseResult]
+
+
 @pytest.fixture
-def parse(capsys):
+def parse(
+    capsys: pytest.CaptureFixture[str],
+) -> ParseCallable:
     # parse is a pytext fixture returning a function
     # This function will:
     # - Ensure that SystemExit exceptions raised by ArgParse are
@@ -28,8 +42,8 @@ def parse(capsys):
     # - Save the status code otherwise
     # - Save and print whatever argparse printed to stdout and stderr
 
-    def _(*args):
-        result = {"status": 0}
+    def _(*args: str) -> ParseResult:
+        result: ParseResult = {"status": 0}
         try:
             result.update({"args": com2ann.parse_cli_args(args), "error": False})
         except SystemExit as exc:
@@ -49,7 +63,7 @@ def parse(capsys):
     return _
 
 
-def test_parse_cli_args__minimal(parse, test_path: pathlib.Path):
+def test_parse_cli_args__minimal(parse: ParseCallable, test_path: pathlib.Path) -> None:
     (test_path / "a.py").touch()
 
     assert parse("a.py")["args"] == {
@@ -64,7 +78,7 @@ def test_parse_cli_args__minimal(parse, test_path: pathlib.Path):
     }
 
 
-def test_parse_cli_args__maximal(parse, test_path: pathlib.Path):
+def test_parse_cli_args__maximal(parse: ParseCallable, test_path: pathlib.Path) -> None:
     (test_path / "a.py").touch()
 
     assert parse(
@@ -88,13 +102,13 @@ def test_parse_cli_args__maximal(parse, test_path: pathlib.Path):
     }
 
 
-def test_parse_cli_args__no_infile(parse):
+def test_parse_cli_args__no_infile(parse: ParseCallable) -> None:
     result = parse()
 
     assert result == {"err": "No input file, exiting", "status": 0}
 
 
-def test_parse_cli_args__missing_file(parse):
+def test_parse_cli_args__missing_file(parse: ParseCallable) -> None:
 
     result = parse("a.py")
     assert result["status"] == 2
@@ -109,8 +123,8 @@ def test_parse_cli_args__missing_file(parse):
     ],
 )
 def test_parse_cli_args__in_out_type_mismatch(
-    parse, test_path: pathlib.Path, infile, outfile
-):
+    parse: ParseCallable, test_path: pathlib.Path, infile: str, outfile: str
+) -> None:
     (test_path / "file.py").touch()
     (test_path / "dir").mkdir()
 
@@ -119,14 +133,18 @@ def test_parse_cli_args__in_out_type_mismatch(
     assert "Infile must be the same type" in result["err"]
 
 
-def test_parse_cli_args__outfile_doesnt_exist(parse, test_path: pathlib.Path):
+def test_parse_cli_args__outfile_doesnt_exist(
+    parse: ParseCallable, test_path: pathlib.Path
+) -> None:
     (test_path / "dir").mkdir()
 
     result = parse("dir", "--outfile", "other_dir")
     assert result["status"] == 0
 
 
-def test_parse_cli_args__multiple_inputs_and_output(parse, test_path: pathlib.Path):
+def test_parse_cli_args__multiple_inputs_and_output(
+    parse: ParseCallable, test_path: pathlib.Path
+) -> None:
     (test_path / "a.py").touch()
     (test_path / "b.py").touch()
 
@@ -135,7 +153,7 @@ def test_parse_cli_args__multiple_inputs_and_output(parse, test_path: pathlib.Pa
     assert "Cannot use --outfile if multiple infiles are given" in result["err"]
 
 
-def test_rebase_path():
+def test_rebase_path() -> None:
     assert com2ann.rebase_path(
         path=pathlib.Path("a/b/c/d"),
         root=pathlib.Path("a/b/"),
@@ -144,16 +162,18 @@ def test_rebase_path():
 
 
 @pytest.fixture
-def options():
+def options() -> com2ann.Options:
     return com2ann.Options(drop_none=True, drop_ellipsis=True, silent=False)
 
 
 @pytest.fixture
-def translate_file(mocker):
+def translate_file(mocker: Any) -> Any:
     return mocker.patch("com2ann.translate_file", autospec=True)
 
 
-def test_process_single_entry__file(test_path: pathlib.Path, translate_file, options):
+def test_process_single_entry__file(
+    test_path: pathlib.Path, translate_file: Any, options: com2ann.Options
+) -> None:
     in_path = test_path / "a.py"
     in_path.touch()
 
@@ -169,8 +189,8 @@ def test_process_single_entry__file(test_path: pathlib.Path, translate_file, opt
 
 
 def test_process_single_entry__dir(
-    test_path: pathlib.Path, translate_file, options, mocker
-):
+    test_path: pathlib.Path, translate_file: Any, options: com2ann.Options, mocker: Any
+) -> None:
     in_path = test_path / "a"
     (in_path / "c/d/e").mkdir(parents=True)
     (in_path / "c/d/e/f.txt").touch()

@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from io import BytesIO
 from tokenize import TokenInfo
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import (Any, DefaultDict, Dict, List, Optional, Sequence, Set,
+                    Tuple, Union)
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -831,7 +832,7 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         fo.write(new_code.encode(enc))
 
 
-def parse_cli_args(args: Optional[List[str]] = None) -> Dict[str, Any]:
+def parse_cli_args(args: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("infile",
                         nargs="*",

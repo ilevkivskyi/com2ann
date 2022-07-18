@@ -12,3 +12,4 @@ pytest-mock>=3.7.0
 pytest-xdist>=1.13
 pyupgrade
 safety
+types-setuptools
