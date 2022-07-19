@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from io import BytesIO
 from tokenize import TokenInfo
-from typing import Any, DefaultDict, List, Optional, Sequence, Union
+from typing import Any, DefaultDict, Sequence, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
