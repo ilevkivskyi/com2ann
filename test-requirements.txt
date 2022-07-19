@@ -1,7 +1,15 @@
-flake8; python_version >= '3.6'
-flake8-bugbear; python_version >= '3.6'
-flake8-pyi; python_version >= '3.6'
-pytest>=2.8; python_version >= '3.3'
-pytest-xdist>=1.13; python_version >= '3.3'
-pytest-cov>=2.4.0; python_version >= '3.3'
-mypy; python_version <= '3.7'
+bandit
+black
+codespell
+flake8
+flake8-bugbear
+flake8-pyi
+isort
+mypy
+pytest
+pytest-cov>=2.4.0
+pytest-mock>=3.7.0
+pytest-xdist>=1.13
+pyupgrade
+safety
+types-setuptools

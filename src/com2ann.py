@@ -9,19 +9,20 @@ We are especially careful about assignment statements, and keep the placement
 of additional (non-type) comments. For function definitions, we might introduce
 some formatting modifications, if the original formatting was too tricky.
 """
-import re
-import os
-import ast
-import sys
-import argparse
-import tokenize
-from tokenize import TokenInfo
-from enum import Enum, auto
-from collections import defaultdict
-from io import BytesIO
-from dataclasses import dataclass
+from __future__ import annotations
 
-from typing import List, DefaultDict, Tuple, Optional, Union, Set
+import argparse
+import ast
+import pathlib
+import re
+import sys
+import tokenize
+from collections import defaultdict
+from dataclasses import dataclass
+from enum import Enum, auto
+from io import BytesIO
+from tokenize import TokenInfo
+from typing import Any, DefaultDict, Sequence, Union
 
 __all__ = ['com2ann', 'TYPE_COM']
 
@@ -91,8 +92,8 @@ class ArgComment:
 @dataclass
 class FunctionData:
     """Location data for translating function comment."""
-    arg_types: List[ArgComment]
-    ret_type: Optional[str]
+    arg_types: list[ArgComment]
+    ret_type: str | None
 
     # The line where 'def' appears.
     header_start_line: int
@@ -102,7 +103,7 @@ class FunctionData:
 
 class FileData:
     """Internal class describing global data on file."""
-    def __init__(self, lines: List[str], tokens: List[TokenInfo], tree: ast.AST) -> None:
+    def __init__(self, lines: list[str], tokens: list[TokenInfo], tree: ast.AST) -> None:
         # Source code lines.
         self.lines = lines
         # Tokens for the source code.
@@ -112,17 +113,17 @@ class FileData:
 
         # Map line number to token numbers. For example {1: [0, 1, 2, 3], 2: [4, 5]}
         # means that first to fourth tokens are on the first line.
-        token_tab: DefaultDict[int, List[int]] = defaultdict(list)
+        token_tab: DefaultDict[int, list[int]] = defaultdict(list)
         for i, tok in enumerate(tokens):
             token_tab[tok.start[0]].append(i)
         self.token_tab = token_tab
 
         # Basic translation logging.
-        self.success: List[int] = []  # list of lines where type comments where processed
-        self.fail: List[int] = []  # list of lines where type comments where rejected
+        self.success: list[int] = []  # list of lines where type comments where processed
+        self.fail: list[int] = []  # list of lines where type comments where rejected
 
         # Types we have inserted during translation.
-        self.seen: Set[str] = set()
+        self.seen: set[str] = set()
 
 
 class TypeCommentCollector(ast.NodeVisitor):
@@ -135,9 +136,9 @@ class TypeCommentCollector(ast.NodeVisitor):
         super().__init__()
         self.silent = silent
         # Type comments we can translate.
-        self.found: List[Union[AssignData, FunctionData]] = []
+        self.found: list[AssignData | FunctionData] = []
         # Type comments that are not supported yet (for reporting).
-        self.found_unsupported: List[int] = []
+        self.found_unsupported: list[int] = []
 
     def visit_Assign(self, s: ast.Assign) -> None:
         if s.type_comment:
@@ -204,7 +205,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
             args = self.process_per_arg_comments(fdef, num_non_defs, kw_non_defs)
 
-            ret: Optional[str]
+            ret: str | None
             if fdef.type_comment:
                 res = split_function_comment(fdef.type_comment, self.silent)
                 if not res:
@@ -244,7 +245,7 @@ class TypeCommentCollector(ast.NodeVisitor):
 
     def process_per_arg_comments(self, fdef: Function,
                                  num_non_defs: int,
-                                 kw_non_defs: Set[int]) -> List[ArgComment]:
+                                 kw_non_defs: set[int]) -> list[ArgComment]:
         """Collect information about per-argument function comments.
 
         These comments look like:
@@ -255,7 +256,7 @@ class TypeCommentCollector(ast.NodeVisitor):
             ):
                 ...
         """
-        args: List[ArgComment] = []
+        args: list[ArgComment] = []
 
         for i, a in enumerate(fdef.args.args):
             if a.type_comment:
@@ -285,15 +286,15 @@ class TypeCommentCollector(ast.NodeVisitor):
         return args
 
     def process_function_comment(self, fdef: Function,
-                                 f_args: List[str],
-                                 num_non_defs: int) -> Optional[List[ArgComment]]:
+                                 f_args: list[str],
+                                 num_non_defs: int) -> list[ArgComment] | None:
         """Combine location data for function arguments with types from a comment.
 
         f_args contains already split argument strings from the function type comment,
         for example if the comment is # type: (int, str) -> None, the f_args should be
         ['int', 'str'].
         """
-        args: List[ArgComment] = []
+        args: list[ArgComment] = []
 
         tot_args = len(fdef.args.args) + len(fdef.args.kwonlyargs)
         if fdef.args.vararg:
@@ -339,7 +340,7 @@ class TypeCommentCollector(ast.NodeVisitor):
         return args
 
 
-def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
+def split_sub_comment(comment: str) -> tuple[str, str | None]:
     """Split extra comment from a type comment.
 
     The only non-trivial thing here is to take care of literal types,
@@ -359,7 +360,7 @@ def split_sub_comment(comment: str) -> Tuple[str, Optional[str]]:
 
 
 def split_function_comment(comment: str,
-                           silent: bool = False) -> Optional[Tuple[List[str], str]]:
+                           silent: bool = False) -> tuple[list[str], str] | None:
     """Split function type comment into argument types and return types.
 
     This also removes any additional sub-comment. For example:
@@ -388,7 +389,7 @@ def split_function_comment(comment: str,
         return None
 
     arg_list = arg_list[1:-1]
-    args: List[str] = []
+    args: list[str] = []
 
     # TODO: use tokenizer to guard against Literal[','].
     next_arg = ''
@@ -530,7 +531,7 @@ def process_assign(comment: AssignData, data: FileData,
                                           lvalue_line[comment.lvalue_end_offset:])
 
 
-def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
+def insert_arg_type(line: str, arg: ArgComment, seen: set[str]) -> str:
     """Insert the argument type at a given location.
 
     Also record the type we translated.
@@ -552,7 +553,7 @@ def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
     return new_line + ' = ' + rest
 
 
-def wrap_function_header(header: str) -> List[str]:
+def wrap_function_header(header: str) -> list[str]:
     """Wrap long function signature (header) one argument per line.
 
     Currently only headers that are initially one-line are supported.
@@ -568,11 +569,11 @@ def wrap_function_header(header: str) -> List[str]:
             ...
     """
     # TODO: use tokenizer to guard against Literal[','].
-    parts: List[str] = []
+    parts: list[str] = []
     next_part = ''
     nested = 0
     complete = False  # Did we split all the arguments inside (...)?
-    indent: Optional[int] = None
+    indent: int | None = None
 
     for i, c in enumerate(header):
         if c in '([{':
@@ -740,7 +741,7 @@ def com2ann(code: str, *,
             silent: bool = False,
             add_future_imports: bool = False,
             wrap_sig: int = 0,
-            python_minor_version: int = -1) -> Optional[Tuple[str, FileData]]:
+            python_minor_version: int = -1) -> tuple[str, FileData] | None:
     """Translate type comments to type annotations in code.
 
     Take code as string and return this string where::
@@ -832,65 +833,111 @@ def translate_file(infile: str, outfile: str, options: Options) -> None:
         fo.write(new_code.encode(enc))
 
 
-def main() -> None:
+def parse_cli_args(args: Sequence[str] | None = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--outfile",
-                        help="output file or directory, will be overwritten if exists,\n"
-                             "defaults to input file or directory")
-    parser.add_argument("infile",
-                        help="input file or directory for translation, must\n"
+    parser.add_argument("infiles",
+                        nargs="*",
+                        type=pathlib.Path,
+                        help="input files or directories for translation, must\n"
                              "contain no syntax errors;\n"
-                             "if --outfile is not given, translation is\n"
-                             "made *in place*")
+                             "if --outfile is not given or multiple input files are\n"
+                             "given, translation is made *in place*")
+
+    parser.add_argument("-o", "--outfile",
+                        type=pathlib.Path,
+                        help="output file or directory, will be overwritten if exists,\n"
+                             "defaults to input file or directory. Cannot be used\n"
+                             "when multiple input files are defined. infiles and\n"
+                             "outfile must be of the same type (file vs. directory)")
+
     parser.add_argument("-s", "--silent",
                         help="do not print summary for line numbers of\n"
                              "translated and rejected comments",
                         action="store_true")
+
     parser.add_argument("-n", "--drop-none",
                         help="drop any None as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+
     parser.add_argument("-e", "--drop-ellipsis",
                         help="drop any Ellipsis (...) as assignment value during\n"
                         "translation if it is annotated by a type comment",
                         action="store_true")
+
     parser.add_argument("-i", "--add-future-imports",
                         help="add 'from __future__ import annotations' to any file\n"
                         "where type comments were successfully translated",
                         action="store_true")
+
     parser.add_argument("-w", "--wrap-signatures",
                         help="wrap function headers that are longer than given length",
                         type=int, default=0)
+
     parser.add_argument("-v", "--python-minor-version",
                         help="Python 3 minor version to use to parse the files",
                         type=int, default=-1)
 
-    args = parser.parse_args()
-    if args.outfile is None:
-        args.outfile = args.infile
+    options = parser.parse_args(args)
 
-    options = Options(args.drop_none, args.drop_ellipsis,
-                      args.silent, args.add_future_imports,
-                      args.wrap_signatures,
-                      args.python_minor_version)
+    infiles: list[pathlib.Path] = options.infiles
+    outfile: pathlib.Path | None = options.outfile
 
-    if os.path.isfile(args.infile):
-        translate_file(args.infile, args.outfile, options)
+    if not infiles:
+        parser.exit(status=0, message="No input file, exiting")
+
+    missing_files = [file for file in infiles if not file.exists()]
+    if missing_files:
+        parser.error(f"File(s) not found: {', '.join(str(e) for e in missing_files)}")
+
+    if len(infiles) == 1:
+        if outfile and outfile.exists() and infiles[0].is_dir() != outfile.is_dir():
+            parser.error("Infile must be the same type as outfile (file vs. directory)")
     else:
-        if os.path.isfile(args.outfile):
-            print("If input is a directory, output must not be a file",
-                  file=sys.stderr)
-            exit(2)
-        for root, _, files in os.walk(args.infile):
-            rel_root = os.path.relpath(root, args.infile)
-            out_root = os.path.join(args.outfile, rel_root)
-            os.makedirs(out_root, exist_ok=True)
-            for file in files:
-                _, ext = os.path.splitext(file)
-                if ext == '.py' or ext == '.pyi':
-                    file_name = os.path.join(root, file)
-                    out_file_name = os.path.join(out_root, file)
-                    translate_file(file_name, out_file_name, options)
+        if outfile is not None:
+            parser.error("Cannot use --outfile if multiple infiles are given")
+
+    return vars(options)
+
+
+def rebase_path(
+    path: pathlib.Path, root: pathlib.Path, new_root: pathlib.Path
+) -> pathlib.Path:
+    """
+    Generate a path that is at the same location relative to `new_root` as `path`
+    was relative to `root`
+    """
+    return new_root / path.relative_to(root)
+
+
+def process_single_entry(
+    in_path: pathlib.Path, out_path: pathlib.Path, options: Options
+) -> None:
+
+    if in_path.is_file():
+        translate_file(infile=str(in_path), outfile=str(out_path), options=options)
+    else:
+        for in_file in sorted(in_path.glob("**/*.py*")):
+            if in_file.suffix not in [".py", ".pyi"] or in_file.is_dir():
+                continue
+
+            out_file = rebase_path(path=in_file, root=in_path, new_root=out_path)
+            if out_file != in_file:
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            translate_file(infile=str(in_file), outfile=str(out_file), options=options)
+
+
+def main() -> None:
+    args = parse_cli_args()
+
+    infiles = args.pop("infiles")
+    outfile = args.pop("outfile")
+    options = Options(**args)
+
+    for infile in infiles:
+        outfile = outfile or infile
+        process_single_entry(in_path=infile, out_path=outfile, options=options)
 
 
 if __name__ == '__main__':
