@@ -32,7 +32,7 @@ MAX_LEVEL: Final = 80
 class Template:
     default: Optional[str] = None
 
-    def apply(self, value: str, **opts: str) -> str:
+    def apply(self, value: str, **opts: bool) -> str:
         ...
 ```
 
@@ -45,7 +45,7 @@ The signatures are wrapped one argument per line (after each comma), for example
 ```python
     def apply(self,
               value: str,
-              **opts: str) -> str:
+              **opts: bool) -> str:
         ...
 ```
 
