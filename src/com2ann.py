@@ -382,7 +382,7 @@ def split_function_comment(comment: str,
     arg_list = arg_list.strip()
     ret = ret.strip()
 
-    if not(arg_list[0] == '(' and arg_list[-1] == ')'):
+    if not (arg_list[0] == '(' and arg_list[-1] == ')'):
         if not silent:
             print('Invalid function type comment:', comment,
                   file=sys.stderr)
