@@ -22,7 +22,7 @@ class Exited(Exception):
 
 
 class ParseResult(TypedDict, total=False):
-    status: int
+    status: int | str | None
     args: dict[str, Any]
     error: bool
     out: str
