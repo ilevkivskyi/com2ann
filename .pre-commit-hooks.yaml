@@ -1,0 +1,6 @@
+- id: com2ann
+  name: com2ann
+  entry: com2ann
+  language: python
+  types: [ file ]
+  files: .*\.(py|pyi|md|rst)
