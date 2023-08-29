@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+from dataclasses import asdict
 from typing import Any, Callable, Iterable, TypedDict
 
 import pytest
@@ -216,3 +217,42 @@ def test_process_single_entry__dir(
             options=options,
         ),
     ]
+
+
+@pytest.fixture
+def parse_cli_args(
+    test_path: pathlib.Path,
+    mocker: Any,
+    options: com2ann.Options,
+) -> Any:
+    f1 = test_path / "f1.py"
+    f2 = test_path / "f2.py"
+
+    f1.write_text("f1 = True")
+    f2.write_text("f2 = False")
+
+    args = {'infiles': [f1, f2], 'outfile': None, **asdict(options)}
+    return mocker.patch("com2ann.parse_cli_args", return_value=args)
+
+
+def test_process_multiple_input_files(
+    test_path: pathlib.Path, translate_file: Any,
+    mocker: Any, parse_cli_args: Any,
+    options: com2ann.Options
+) -> None:
+    com2ann.main()
+
+    assert translate_file.mock_calls == [
+        mocker.call(
+            infile=str(test_path / "f1.py"),
+            outfile=str(test_path / "f1.py"),
+            options=options,
+        ),
+        mocker.call(
+            infile=str(test_path / "f2.py"),
+            outfile=str(test_path / "f2.py"),
+            options=options,
+        ),
+    ]
+    assert (test_path / "f1.py").read_text() == "f1 = True"
+    assert (test_path / "f2.py").read_text() == "f2 = False"

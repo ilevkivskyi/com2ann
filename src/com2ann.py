@@ -936,8 +936,8 @@ def main() -> None:
     options = Options(**args)
 
     for infile in infiles:
-        outfile = outfile or infile
-        process_single_entry(in_path=infile, out_path=outfile, options=options)
+        cur_outfile = outfile or infile
+        process_single_entry(in_path=infile, out_path=cur_outfile, options=options)
 
 
 if __name__ == '__main__':
