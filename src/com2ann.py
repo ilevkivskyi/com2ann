@@ -772,7 +772,8 @@ def com2ann(code: str, *,
         tree = ast.parse(code,
                          type_comments=True,
                          feature_version=(3, python_minor_version))
-    except SyntaxError:
+    except SyntaxError as exc:
+        print("SyntaxError:", exc, file=sys.stderr)
         return None
     lines = code.splitlines(keepends=True)
     rl = BytesIO(code.encode('utf-8')).readline
