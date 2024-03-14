@@ -310,7 +310,7 @@ class TypeCommentCollector(ast.NodeVisitor):
             self.found_unsupported.append(fdef.lineno)
             return None
 
-        # The list of arguments we need to annnotate.
+        # The list of arguments we need to annotate.
         if len(f_args) == tot_args - 1:
             iter_args = fdef.args.args[1:]
         else:
