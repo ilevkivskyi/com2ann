@@ -231,14 +231,16 @@ def parse_cli_args(
     f1.write_text("f1 = True")
     f2.write_text("f2 = False")
 
-    args = {'infiles': [f1, f2], 'outfile': None, **asdict(options)}
+    args = {"infiles": [f1, f2], "outfile": None, **asdict(options)}
     return mocker.patch("com2ann.parse_cli_args", return_value=args)
 
 
 def test_process_multiple_input_files(
-    test_path: pathlib.Path, translate_file: Any,
-    mocker: Any, parse_cli_args: Any,
-    options: com2ann.Options
+    test_path: pathlib.Path,
+    translate_file: Any,
+    mocker: Any,
+    parse_cli_args: Any,
+    options: com2ann.Options,
 ) -> None:
     com2ann.main()
 
