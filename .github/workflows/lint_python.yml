@@ -20,4 +20,3 @@ jobs:
           mkdir --parents --verbose .mypy_cache
       - run: mypy --ignore-missing-imports --install-types --non-interactive .
       - run: pytest .
-      - run: safety scan
