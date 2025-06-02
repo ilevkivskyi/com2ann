@@ -374,6 +374,20 @@ class FunctionTestCase(BaseTestCase):
             """,
         )
 
+    def test_invalid_return_type(self) -> None:
+        self.check(
+            """
+            def load_cache(x):
+                # type: (str) -> bool -> invalid
+                pass
+            """,
+            """
+            def load_cache(x):
+                # type: (str) -> bool -> invalid
+                pass
+            """,
+        )
+
     def test_combined_annotations_single(self) -> None:
         self.check(
             """
