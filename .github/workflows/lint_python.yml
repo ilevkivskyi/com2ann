@@ -11,13 +11,13 @@ jobs:
       - run: pip install --upgrade pip wheel
       - run: pip install -r test-requirements.txt
       - run: bandit --recursive --skip B101 .  # B101 is assert statements
-      - run: black --check . || true
+      - run: black --check .
       - run: codespell --ignore-words-list="fo"
       - run: flake8 . --count --max-complexity=12 --max-line-length=89 --show-source --statistics
-      - run: isort --check-only --profile black . || true
+      - run: isort --check-only --profile black .
       - run: |
           pip install --editable .
           mkdir --parents --verbose .mypy_cache
       - run: mypy --ignore-missing-imports --install-types --non-interactive .
       - run: pytest .
-      - run: safety check
+      - run: safety scan
