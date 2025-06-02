@@ -411,7 +411,7 @@ def split_function_comment(
     is transformed into: ['int', 'str'], 'None'.
     """
     typ, _ = split_sub_comment(comment)
-    if "->" not in typ:
+    if typ.count("->") != 1:
         if not silent:
             print("Invalid function type comment:", comment, file=sys.stderr)
         return None
